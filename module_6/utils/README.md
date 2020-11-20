@@ -2,3 +2,4 @@
 
 - autoru\main.py - конфигирурация и запуск
 - autoru\scraping.py - библиотека
+- input - полученный dataset
