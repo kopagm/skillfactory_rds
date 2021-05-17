@@ -40,8 +40,8 @@ from tensorflow.keras.preprocessing.image import ImageDataGenerator
 #from tf.keras.applications.inception_v3 import Inception_v3
 
 
-EPOCHS = 5  # эпох на обучение
-BATCH_SIZE = 64  # уменьшаем batch если сеть большая, иначе не влезет в память на GPU
+EPOCHS = 10  # эпох на обучение
+BATCH_SIZE = 16  # уменьшаем batch если сеть большая, иначе не влезет в память на GPU
 LR = 1e-4
 VAL_SPLIT = 0.15  # сколько данных выделяем на тест = 15%
 
@@ -120,10 +120,7 @@ def predict_submission(model, generator, name='new'):
     submission = pd.DataFrame(
         {'Id': filenames_with_dir, 'Category': predictions}, columns=['Id', 'Category'])
     submission['Id'] = submission['Id'].replace('test_upload/', '')
-    submission.to_csv('submission.csv', index=False)
-
-    submission = pd.DataFrame(
-        {'Id': list(range(len(predictions))), 'Category': predictions})
+    # submission.to_csv('submission.csv', index=False)
     submission.to_csv(f'{name}_submission.csv', index=False)
     subprocess.run(['cp', f'{name}_submission.csv',
                    '/content/drive/MyDrive/Colab Notebooks/kaggle/models'], capture_output=True)
@@ -260,7 +257,7 @@ def model_efn(lr=1e-4):
 
     # model.compile(loss="categorical_crossentropy", optimizer=optimizers.Adam(lr=LR), metrics=["accuracy"])
     # model.compile(loss="sparse_categorical_crossentropy", optimizer=optimizers.Adam(lr=lr), metrics=["accuracy"])
-    model.compile(loss="sparse_categorical_crossentropy", optimizer=optimizers.Adam(
+    model.compile(loss="categorical_crossentropy", optimizer=optimizers.Adam(
         learning_rate=lr), metrics=["accuracy"])
     # model.compile(loss="sparse_categorical_crossentropy", optimizer=optimizers.Adagrad(), metrics=["accuracy"])
 
@@ -356,9 +353,10 @@ earlystop = EarlyStopping(monitor='val_accuracy',
                           patience=5, restore_best_weights=True)
 callbacks_list = [checkpoint, earlystop]
 
-model = model_xcept(lr=LR)
-# model = model_efn(lr=LR)
-model.load_weights('best_model.hdf5')
+# model = model_xcept(lr=LR)
+model = model_efn(lr=LR)
+# model.load_weights('best_model.hdf5')
+model_name = 'efn'+'lr_'+str(lr)
 
 # # model.compile(loss="categorical_crossentropy", optimizer=optimizers.Adam(lr=LR), metrics=["accuracy"])
 
@@ -379,14 +377,14 @@ plot_history(history)
 scores = model.evaluate(val_generator, verbose=1)
 print(f"{'-'*15}\nAccuracy: {scores[1]*100:.2f}\n{'-'*15}")
 
-# subprocess.run(['cp', 'best_model.hdf5',
-#                '/content/drive/MyDrive/Colab Notebooks/kaggle/models'], capture_output=True)
+subprocess.run(['cp', 'best_model.hdf5',
+               '/content/drive/MyDrive/Colab Notebooks/kaggle/models'], capture_output=True)
 
 # subprocess.run(['cp',
 #                '/content/drive/MyDrive/Colab Notebooks/kaggle/models',
 #                'best_model.hdf5'], capture_output=True)
 
-predict_submission(model, generator=sub_generator, name='xcept')
+predict_submission(model, generator=sub_generator, name=model_name)
 
 
 # if __name__ == '__main__':
