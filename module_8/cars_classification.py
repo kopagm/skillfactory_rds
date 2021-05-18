@@ -1,4 +1,5 @@
 import csv
+import glob
 import os
 import pickle
 import subprocess
@@ -40,7 +41,7 @@ from tensorflow.keras.preprocessing.image import ImageDataGenerator
 #from tf.keras.applications.inception_v3 import Inception_v3
 
 
-EPOCHS = 10  # эпох на обучение
+EPOCHS = 5  # эпох на обучение
 BATCH_SIZE = 16  # уменьшаем batch если сеть большая, иначе не влезет в память на GPU
 LR = 1e-4
 VAL_SPLIT = 0.15  # сколько данных выделяем на тест = 15%
@@ -175,7 +176,7 @@ def plot_images_from_generator(generator):
     plt.show()
 
 
-def plot_history(history):
+def plot_history(history, score=''):
     plt.figure(figsize=(10, 5))
     acc = history.history['accuracy']
     val_acc = history.history['val_accuracy']
@@ -186,15 +187,18 @@ def plot_history(history):
 
     plt.plot(epochs, acc, 'b', label='Training acc')
     plt.plot(epochs, val_acc, 'r', label='Validation acc')
-    plt.title('Training and validation accuracy')
+    plt.title(f'Accuracy {model_name}. {score}')
     plt.legend()
+    plt.savefig(f'accuracy_{model_name}.png', dpi = 600)
+
 
     # plt.figure()
     plt.figure(figsize=(10, 5))
     plt.plot(epochs, loss, 'b', label='Training loss')
     plt.plot(epochs, val_loss, 'r', label='Validation loss')
-    plt.title('Training and validation loss')
+    plt.title(f'Loss {model_name}')
     plt.legend()
+    plt.savefig(f'loss_{model_name}.png', dpi = 600)
 
     plt.show()
 
@@ -239,27 +243,20 @@ def model_efn(lr=1e-4):
     base_model = EfficientNetB6(
         weights='imagenet', include_top=False, input_shape=input_shape, pooling='avg')
 
-    # base_model.summary()
-
-    # first: train only the top layers (which were randomly initialized)
     # base_model.trainable = False
 
-    model = M.Sequential()
-    model.add(base_model)
-    # model.add(L.GlobalAveragePooling2D(),)
-    model.add(L.Dense(CLASS_NUM, activation='softmax'))
+    x = base_model.output
+    # x = GlobalAveragePooling2D()(x)
+    # let's add a fully-connected layer
+    x = Dense(256, activation='relu')(x)
+    x = Dropout(0.25)(x)
+    # and a logistic layer -- let's say we have 10 classes
+    predictions = Dense(CLASS_NUM, activation='softmax')(x)
 
-    # model.compile(
-    #     loss='sparse_categorical_crossentropy',
-    #     optimizer=keras.optimizers.Adam(lr),
-    #     metrics='accuracy'
-    # )
-
-    # model.compile(loss="categorical_crossentropy", optimizer=optimizers.Adam(lr=LR), metrics=["accuracy"])
-    # model.compile(loss="sparse_categorical_crossentropy", optimizer=optimizers.Adam(lr=lr), metrics=["accuracy"])
-    model.compile(loss="categorical_crossentropy", optimizer=optimizers.Adam(
-        learning_rate=lr), metrics=["accuracy"])
-    # model.compile(loss="sparse_categorical_crossentropy", optimizer=optimizers.Adagrad(), metrics=["accuracy"])
+    # this is the model we will train
+    model = Model(inputs=base_model.input, outputs=predictions)
+    model.compile(loss="categorical_crossentropy",
+                  optimizer=optimizers.Adam(lr), metrics=["accuracy"])
 
     return model
 
@@ -355,13 +352,13 @@ callbacks_list = [checkpoint, earlystop]
 
 # model = model_xcept(lr=LR)
 model = model_efn(lr=LR)
-# model.load_weights('best_model.hdf5')
-model_name = 'efn'+'lr_'+str(lr)
+model.load_weights('best_model.hdf5')
+model_name = 'efn 2l full trainable 10+5'+'_lr_'+str(LR)
 
 # # model.compile(loss="categorical_crossentropy", optimizer=optimizers.Adam(lr=LR), metrics=["accuracy"])
 
-# # scores = model.evaluate(val_generator, verbose=1)
-# # print(f"{'-'*15}\nbefore training\nAccuracy: {scores[1]*100:.2f}\n{'-'*15}")
+scores = model.evaluate(val_generator, verbose=1)
+print(f"{'-'*15}\nbefore training\nAccuracy: {scores[1]*100:.2f}\n{'-'*15}")
 
 history = model.fit(
     train_generator,
@@ -373,12 +370,15 @@ history = model.fit(
     callbacks=callbacks_list
 )
 
-plot_history(history)
 scores = model.evaluate(val_generator, verbose=1)
 print(f"{'-'*15}\nAccuracy: {scores[1]*100:.2f}\n{'-'*15}")
+plot_history(history, f'Accuracy: {scores[1]*100:.2f}')
 
 subprocess.run(['cp', 'best_model.hdf5',
                '/content/drive/MyDrive/Colab Notebooks/kaggle/models'], capture_output=True)
+
+subprocess.run(['cp'] + glob.glob('*.png') +
+               ['/content/drive/MyDrive/Colab Notebooks/kaggle/models'], capture_output=True)
 
 # subprocess.run(['cp',
 #                '/content/drive/MyDrive/Colab Notebooks/kaggle/models',
