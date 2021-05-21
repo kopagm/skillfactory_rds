@@ -6,6 +6,9 @@ import subprocess
 import sys
 import tarfile
 import zipfile
+from datetime import datetime
+
+from pandas.core.indexes import base
 
 # import efficientnet.tfkeras as efn
 import keras
@@ -32,7 +35,7 @@ from sklearn.model_selection import train_test_split
 #from tensorflow.keras.regularizers import l2
 from tensorflow.keras import optimizers
 from tensorflow.keras.applications import EfficientNetB6
-from tensorflow.keras.applications.xception import Xception
+from tensorflow.keras.applications.xception import Xception, preprocess_input
 from tensorflow.keras.callbacks import (Callback, EarlyStopping,
                                         LearningRateScheduler, ModelCheckpoint)
 from tensorflow.keras.preprocessing import image
@@ -42,12 +45,15 @@ from tensorflow.keras.preprocessing.image import ImageDataGenerator
 
 
 EPOCHS = 5  # эпох на обучение
-BATCH_SIZE = 16  # уменьшаем batch если сеть большая, иначе не влезет в память на GPU
+BATCH_SIZE = 64  # уменьшаем batch если сеть большая, иначе не влезет в память на GPU
+# BATCH_SIZE = 16  # уменьшаем batch если сеть большая, иначе не влезет в память на GPU
 LR = 1e-4
 VAL_SPLIT = 0.15  # сколько данных выделяем на тест = 15%
 
 CLASS_NUM = 10  # количество классов в нашей задаче
 IMG_SIZE = 224  # какого размера подаем изображения в сеть
+# IMG_SIZE = 64  # какого размера подаем изображения в сеть
+
 IMG_CHANNELS = 3   # у RGB 3 канала
 input_shape = (IMG_SIZE, IMG_SIZE, IMG_CHANNELS)
 
@@ -91,6 +97,14 @@ def unzip_data(path_input='.', path_output='.'):
                 z.extractall(path_output)
 
 
+def load_model_weights(path='.'):
+    # unzip data
+    if not all([dir in os.listdir() for dir in ['train', 'test_upload']]):
+        for data_zip in ['train.zip', 'test.zip']:
+            with zipfile.ZipFile(f'{path_input}{data_zip}', 'r') as z:
+                z.extractall(path_output)
+
+
 def load_data():
     """
     load DataFrames from files (train_df, sample_submission)
@@ -100,14 +114,14 @@ def load_data():
         sample_submission = pd.read_csv(f'{path}sample-submission.csv')
         return (train_df, sample_submission)
 
-    if 'google.colab' in sys.modules:
+    if IS_ENV_COLAB:
         # running in colab
         download_competition_data()
-    else:
-        # running in kaggel
-        os.makedirs(PATH, exist_ok=False)
+    # else:
+    #     # running in kaggel
+    #     os.makedirs(PATH, exist_ok=False)
     unzip_data(DATA_PATH, PATH)
-    return load_from_files(PATH)
+    return load_from_files(DATA_PATH)
 
 
 def predict_submission(model, generator, name='new'):
@@ -123,8 +137,9 @@ def predict_submission(model, generator, name='new'):
     submission['Id'] = submission['Id'].replace('test_upload/', '')
     # submission.to_csv('submission.csv', index=False)
     submission.to_csv(f'{name}_submission.csv', index=False)
-    subprocess.run(['cp', f'{name}_submission.csv',
-                   '/content/drive/MyDrive/Colab Notebooks/kaggle/models'], capture_output=True)
+    if IS_ENV_COLAB:
+        subprocess.run(['cp', f'{name}_submission.csv',
+                        '/content/drive/MyDrive/Colab Notebooks/kaggle/models'], capture_output=True)
 
 
 def imshow(image_RGB):
@@ -176,7 +191,9 @@ def plot_images_from_generator(generator):
     plt.show()
 
 
-def plot_history(history, score=''):
+def plot_history(history, model_name='model', score=''):
+    now = datetime.now().strftime("%d_%m_%Y_%H:%M:%S")
+
     plt.figure(figsize=(10, 5))
     acc = history.history['accuracy']
     val_acc = history.history['val_accuracy']
@@ -189,8 +206,7 @@ def plot_history(history, score=''):
     plt.plot(epochs, val_acc, 'r', label='Validation acc')
     plt.title(f'Accuracy {model_name}. {score}')
     plt.legend()
-    plt.savefig(f'accuracy_{model_name}.png', dpi = 600)
-
+    plt.savefig(f'accuracy_{model_name}_{now}.png', dpi=600)
 
     # plt.figure()
     plt.figure(figsize=(10, 5))
@@ -198,7 +214,7 @@ def plot_history(history, score=''):
     plt.plot(epochs, val_loss, 'r', label='Validation loss')
     plt.title(f'Loss {model_name}')
     plt.legend()
-    plt.savefig(f'loss_{model_name}.png', dpi = 600)
+    # plt.savefig(f'loss_{model_name}_{now}.png', dpi=600)
 
     plt.show()
 
@@ -210,34 +226,37 @@ def load_model():
     return model
 
 
-def model_baseline(lr=1e-4):
-    model = keras.Sequential([
-        keras.Input(shape=input_shape),
-        keras.layers.Conv2D(32, (3, 3), activation='relu'),
-        keras.layers.Conv2D(64, (3, 3), activation='relu'),
-        keras.layers.MaxPooling2D(),
-        keras.layers.Conv2D(64, (3, 3), activation='relu'),
-        keras.layers.Conv2D(128, (3, 3), activation='relu'),
-        keras.layers.MaxPooling2D(),
-        keras.layers.Conv2D(64, (3, 3), activation='relu'),
-        keras.layers.Conv2D(128, (3, 3), activation='relu'),
-        keras.layers.MaxPooling2D(),
-        keras.layers.Flatten(),
-        keras.layers.Dense(100, activation='relu'),
-        keras.layers.Dense(CLASS_NUM, activation='softmax')
-    ])
+def print_layers(model):
+    for layer in model.layers:
+        print(layer, layer.trainable)
 
-    model.compile(
-        loss='sparse_categorical_crossentropy',
-        optimizer=keras.optimizers.Adam(lr),
-        metrics='accuracy'
-    )
-    return model
+
+def unfreeze_model(model, ratio=1):
+    '''
+    Unfreeze model layers.
+    ratio - [0,1], 1 - all layers trainable.
+    '''
+    if 0 < ratio <= 1:
+        model.trainable = True
+        fine_tune_at = round(len(model.layers) * ratio)
+        for layer in model.layers[:-fine_tune_at]:
+            layer.trainable = False
+    else:
+        model.trainable = False
+
+def compile_model(model, lr=LR):
+    '''
+    Compile model
+    '''
+    model.compile(loss="categorical_crossentropy",
+                  optimizer=optimizers.Adam(lr),
+                  metrics=["accuracy"])
 
 
 def model_efn(lr=1e-4):
     '''
-    EfficientNetB6 not trainable
+    EfficientNetB6
+    EfficientNet models expect their inputs to be float tensors of pixels with values in the [0-255] range.
     '''
     # base_model = efn.EfficientNetB6(weights='imagenet', include_top=False, input_shape=input_shape)
     base_model = EfficientNetB6(
@@ -249,6 +268,35 @@ def model_efn(lr=1e-4):
     # x = GlobalAveragePooling2D()(x)
     # let's add a fully-connected layer
     x = Dense(256, activation='relu')(x)
+    x = BatchNormalization()(x)
+    x = Dropout(0.25)(x)
+    # and a logistic layer -- let's say we have 10 classes
+    predictions = Dense(CLASS_NUM, activation='softmax')(x)
+
+    # this is the model we will train
+    model = Model(inputs=base_model.input, outputs=predictions)
+    model.compile(loss="categorical_crossentropy",
+                  optimizer=optimizers.Adam(lr), metrics=["accuracy"])
+
+    return model
+
+
+def model_efn_bnorm(lr=1e-4):
+    '''
+    EfficientNetB6 +batchnorm
+    EfficientNet models expect their inputs to be float tensors of pixels with values in the [0-255] range.
+    '''
+    # base_model = efn.EfficientNetB6(weights='imagenet', include_top=False, input_shape=input_shape)
+    base_model = EfficientNetB6(
+        weights='imagenet', include_top=False, input_shape=input_shape, pooling='avg')
+
+    # base_model.trainable = False
+
+    x = base_model.output
+    # x = GlobalAveragePooling2D()(x)
+    # let's add a fully-connected layer
+    x = Dense(256, activation='relu')(x)
+    x = BatchNormalization()(x)
     x = Dropout(0.25)(x)
     # and a logistic layer -- let's say we have 10 classes
     predictions = Dense(CLASS_NUM, activation='softmax')(x)
@@ -264,6 +312,11 @@ def model_efn(lr=1e-4):
 def model_xcept(lr=LR):
     '''
     Xception
+    For Xception, call
+    tf.keras.applications.xception.preprocess_input 
+    on your inputs before passing them to the 
+    model.xception.preprocess_input will scale input 
+    pixels between -1 and 1.
     '''
     base_model = Xception(weights='imagenet',
                           include_top=False, input_shape=input_shape)
@@ -276,6 +329,7 @@ def model_xcept(lr=LR):
     x = GlobalAveragePooling2D()(x)
     # let's add a fully-connected layer
     x = Dense(256, activation='relu')(x)
+    x = BatchNormalization()(x)
     x = Dropout(0.25)(x)
     # and a logistic layer -- let's say we have 10 classes
     predictions = Dense(CLASS_NUM, activation='softmax')(x)
@@ -290,10 +344,115 @@ def model_xcept(lr=LR):
     return model
 
 
+def model_xcept_w_unfreeze(lr=LR, unfreeze_ratio=1):
+    '''
+    Xception new
+    For Xception, call
+    tf.keras.applications.xception.preprocess_input 
+    on your inputs before passing them to the 
+    model.xception.preprocess_input will scale input 
+    pixels between -1 and 1.
+    '''
+    base_model = Xception(weights='imagenet',
+                          include_top=False,
+                          input_shape=input_shape,
+                          pooling='avg')
+    # unfreeze_model(base_model, ratio=unfreeze_ratio)
+
+    inputs = keras.Input(shape=input_shape)
+    x = tf.cast(inputs, tf.float32)
+    x = preprocess_input(x)
+    # We make sure that the base_model is running in inference mode here,
+    # by passing `training=False`. This is important for fine-tuning, as you will
+    # learn in a few paragraphs.
+    # x = base_model(x, training=True)
+    x = base_model(x, training=False)
+
+    # base_model.summary()
+    # x = base_model.output
+    # x = GlobalAveragePooling2D()(x)
+
+    # let's add a fully-connected layer
+    x = Dense(256, activation='relu')(x)
+    x = BatchNormalization()(x)
+    x = Dropout(0.25)(x)
+    # and a logistic layer -- let's say we have 10 classes
+    predictions = Dense(CLASS_NUM, activation='softmax')(x)
+
+    # this is the model we will train
+    model = Model(inputs=inputs,
+                  outputs=predictions,
+                  name=f'Xception_freeze_{unfreeze_ratio}')
+    model.compile(loss="categorical_crossentropy",
+                  optimizer=optimizers.Adam(lr), metrics=["accuracy"])
+
+    # model.summary()
+    # Рекомендация: Попробуйте добавить Batch Normalization
+    return model, base_model
+
+
+def fine_tune_fit(model_fun, weights=None):
+    # step - (lr, unfreeze_ratio)
+    steps = [(1e-3, 0),
+             (1e-4, 0.5),
+             (1e-5, 1)]
+
+    model, base_model = model_fun()
+
+    for step, (lr, ratio) in enumerate(steps):
+
+        unfreeze_model(base_model, ratio)
+        compile_model(model, lr)
+        model_name = model.name + \
+            '_e' + str(EPOCHS) + \
+            '_lr_'+str(lr) + \
+            '_fratio_'+str(ratio) + \
+            '_i'+str(IMG_SIZE)
+
+        # if weights:
+        #     # load weights from 'best_model.hdf5'
+        #     model.load_weights(weights)
+
+        scores = model.evaluate(val_generator, verbose=1)
+        print(f"{'-'*40}\n" +
+              f"before {step} training\n" +
+              f"Accuracy: {scores[1]*100:.2f}\n" +
+              f"{'-'*40}\n" +
+              f"Start training. Unfreeze: {ratio}, LR: {lr}\n" +
+              f"{'-'*40}")
+
+        history = model.fit(
+            train_generator,
+            validation_data=val_generator,
+            epochs=EPOCHS,
+            callbacks=callbacks_list
+        )
+
+        scores = model.evaluate(val_generator, verbose=1)
+        print(f"{'-'*21}\n" +
+              f"Accuracy step {step}: {scores[1]*100:.2f}\n" +
+              f"{'-'*21}")
+        plot_history(history,
+                     model_name,
+                     f'Accuracy step {step}: {scores[1]*100:.2f}')
+        weights = 'best_model.hdf5'
+
+        if IS_ENV_COLAB:
+            subprocess.run(['cp', 'best_model.hdf5',
+                            '/content/drive/MyDrive/Colab Notebooks/kaggle/models'], capture_output=True)
+
+            subprocess.run(['cp'] + glob.glob('*.png') +
+                           ['/content/drive/MyDrive/Colab Notebooks/kaggle/models'], capture_output=True)
+
+    return model
+
+
 """
 Main part
 """
 # def main():
+start_time = datetime.now()
+
 K.clear_session()
 
 train_df, sample_submission = load_data()
@@ -302,16 +461,17 @@ plot_im_size(train_df)
 # images, labels, images_sub = load_data()
 # print(images.shape)
 
-train_datagen = ImageDataGenerator(rescale=1. / 255,
-                                   rotation_range=50,
-                                   shear_range=0.2,
-                                   zoom_range=[0.75, 1.25],
-                                   brightness_range=[0.5, 1.5],
-                                   width_shift_range=0.1,
-                                   height_shift_range=0.1,
-                                   horizontal_flip=False,
-                                   validation_split=VAL_SPLIT)
-test_datagen = ImageDataGenerator(rescale=1. / 255)
+train_datagen = ImageDataGenerator(  # rescale=1. / 255,
+    rotation_range=50,
+    shear_range=0.2,
+    zoom_range=[0.75, 1.25],
+    brightness_range=[0.5, 1.5],
+    width_shift_range=0.1,
+    height_shift_range=0.1,
+    horizontal_flip=False,
+    validation_split=VAL_SPLIT)
+test_datagen = ImageDataGenerator(  # rescale=1. / 255
+)
 
 train_generator = train_datagen.flow_from_directory(
     PATH+'train/',      # директория где расположены папки с картинками
@@ -350,42 +510,61 @@ earlystop = EarlyStopping(monitor='val_accuracy',
                           patience=5, restore_best_weights=True)
 callbacks_list = [checkpoint, earlystop]
 
+work_model = model_xcept_w_unfreeze
+model = fine_tune_fit(work_model)
+
+# single step
+
 # model = model_xcept(lr=LR)
-model = model_efn(lr=LR)
-model.load_weights('best_model.hdf5')
-model_name = 'efn 2l full trainable 10+5'+'_lr_'+str(LR)
+# model = model_xcept_new(lr=LR, unfreeze_ratio=0)
+# model_name = model.name+'dl2_d025_e5' + \
+#     '_lr_'+str(LR) + \
+#     '_i'+str(IMG_SIZE)
+
+
+# model = model_efn(lr=LR)
+# model = model_efn_bnorm(lr=LR)
+# model.load_weights('best_model.hdf5')
+# model_name = 'efnbnorm dl2 d0 tr100 +5' + \
+#     '_lr_'+str(LR) + \
+#     ' i'+str(IMG_SIZE)
 
 # # model.compile(loss="categorical_crossentropy", optimizer=optimizers.Adam(lr=LR), metrics=["accuracy"])
 
-scores = model.evaluate(val_generator, verbose=1)
-print(f"{'-'*15}\nbefore training\nAccuracy: {scores[1]*100:.2f}\n{'-'*15}")
+# scores = model.evaluate(val_generator, verbose=1)
+# print(f"{'-'*15}\nbefore training\nAccuracy: {scores[1]*100:.2f}\n{'-'*15}")
 
-history = model.fit(
-    train_generator,
-    validation_data=val_generator,
-    # steps_per_epoch = train_generator.samples//train_generator.batch_size,
-    # validation_data = test_generator,
-    # validation_steps = test_generator.samples//test_generator.batch_size,
-    epochs=EPOCHS,
-    callbacks=callbacks_list
-)
+# history = model.fit(
+#     train_generator,
+#     validation_data=val_generator,
+#     # steps_per_epoch = train_generator.samples//train_generator.batch_size,
+#     # validation_data = test_generator,
+#     # validation_steps = test_generator.samples//test_generator.batch_size,
+#     epochs=EPOCHS,
+#     callbacks=callbacks_list
+# )
 
-scores = model.evaluate(val_generator, verbose=1)
-print(f"{'-'*15}\nAccuracy: {scores[1]*100:.2f}\n{'-'*15}")
-plot_history(history, f'Accuracy: {scores[1]*100:.2f}')
+# scores = model.evaluate(val_generator, verbose=1)
+# print(f"{'-'*15}\nAccuracy: {scores[1]*100:.2f}\n{'-'*15}")
+# plot_history(history, model_name, f'Accuracy: {scores[1]*100:.2f}')
 
-subprocess.run(['cp', 'best_model.hdf5',
-               '/content/drive/MyDrive/Colab Notebooks/kaggle/models'], capture_output=True)
+# subprocess.run(['cp', 'best_model.hdf5',
+#                '/content/drive/MyDrive/Colab Notebooks/kaggle/models'], capture_output=True)
 
-subprocess.run(['cp'] + glob.glob('*.png') +
-               ['/content/drive/MyDrive/Colab Notebooks/kaggle/models'], capture_output=True)
+# subprocess.run(['cp'] + glob.glob('*.png') +
+#                ['/content/drive/MyDrive/Colab Notebooks/kaggle/models'], capture_output=True)
 
 # subprocess.run(['cp',
-#                '/content/drive/MyDrive/Colab Notebooks/kaggle/models',
-#                'best_model.hdf5'], capture_output=True)
+#                '/content/drive/MyDrive/Colab Notebooks/kaggle/models/best_model.hdf5',
+#                '.'], capture_output=True)
 
-predict_submission(model, generator=sub_generator, name=model_name)
+# predict
 
+# model = work_model()
+# model.load_weights('best_model.hdf5')
+predict_submission(model, generator=sub_generator, name=model.name)
+
+print(f'Running time: {datetime.now() - start_time}')
 
 # if __name__ == '__main__':
 #     main()
