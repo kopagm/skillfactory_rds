@@ -44,9 +44,9 @@ from tensorflow.keras.preprocessing.image import ImageDataGenerator
 #from tf.keras.applications.inception_v3 import Inception_v3
 
 
-EPOCHS = 5  # эпох на обучение
-BATCH_SIZE = 64  # уменьшаем batch если сеть большая, иначе не влезет в память на GPU
-# BATCH_SIZE = 16  # уменьшаем batch если сеть большая, иначе не влезет в память на GPU
+EPOCHS = 10  # эпох на обучение
+# BATCH_SIZE = 64  # Xception # уменьшаем batch если сеть большая, иначе не влезет в память на GPU
+BATCH_SIZE = 16  # EfficientNetB6
 LR = 1e-4
 VAL_SPLIT = 0.15  # сколько данных выделяем на тест = 15%
 
@@ -63,7 +63,7 @@ PYTHONHASHSEED = 0
 
 # kaggle
 DATA_PATH_KAGGLE = '../input/'
-PATH_KAGGLE = '../working/car/'  # рабочая директория
+PATH_KAGGLE = '../car/'  # рабочая директория
 # colab
 DATA_PATH_COLAB = './'
 PATH_COLAB = './'  # рабочая директория
@@ -126,6 +126,35 @@ def load_data():
 
 def predict_submission(model, generator, name='new'):
     predictions = model.predict(generator, verbose=1)
+    predictions = np.argmax(predictions, axis=-1)  # multiple categories
+    label_map = (train_generator.class_indices)
+    label_map = dict((v, k) for k, v in label_map.items())  # flip k,v
+    predictions = [label_map[k] for k in predictions]
+
+    filenames_with_dir = sub_generator.filenames
+    submission = pd.DataFrame(
+        {'Id': filenames_with_dir, 'Category': predictions}, columns=['Id', 'Category'])
+    submission['Id'] = submission['Id'].replace('test_upload/', '')
+    # submission.to_csv('submission.csv', index=False)
+    submission.to_csv(f'{name}_submission.csv', index=False)
+    if IS_ENV_COLAB:
+        subprocess.run(['cp', f'{name}_submission.csv',
+                        '/content/drive/MyDrive/Colab Notebooks/kaggle/models'], capture_output=True)
+
+
+def predict_tta(model, generator, name='new', tta_steps=10):
+    """
+    from flowers
+    in process
+    """
+    predictions = []
+
+    for i in range(tta_steps):
+        preds = model.predict(generator, verbose=1)
+        predictions.append(preds)
+
+    pred = np.mean(predictions, axis=0)
+
     predictions = np.argmax(predictions, axis=-1)  # multiple categories
     label_map = (train_generator.class_indices)
     label_map = dict((v, k) for k, v in label_map.items())  # flip k,v
@@ -244,6 +273,7 @@ def unfreeze_model(model, ratio=1):
     else:
         model.trainable = False
 
+
 def compile_model(model, lr=LR):
     '''
     Compile model
@@ -281,7 +311,7 @@ def model_efn(lr=1e-4):
     return model
 
 
-def model_efn_bnorm(lr=1e-4):
+def model_efn_with_base(lr=1e-4):
     '''
     EfficientNetB6 +batchnorm
     EfficientNet models expect their inputs to be float tensors of pixels with values in the [0-255] range.
@@ -302,11 +332,13 @@ def model_efn_bnorm(lr=1e-4):
     predictions = Dense(CLASS_NUM, activation='softmax')(x)
 
     # this is the model we will train
-    model = Model(inputs=base_model.input, outputs=predictions)
+    model = Model(inputs=base_model.input,
+                  outputs=predictions,
+                  name=f'EfficientNetB6')
     model.compile(loss="categorical_crossentropy",
                   optimizer=optimizers.Adam(lr), metrics=["accuracy"])
 
-    return model
+    return model, base_model
 
 
 def model_xcept(lr=LR):
@@ -344,7 +376,7 @@ def model_xcept(lr=LR):
     return model
 
 
-def model_xcept_w_unfreeze(lr=LR, unfreeze_ratio=1):
+def model_xcept_with_base(lr=LR, unfreeze_ratio=1):
     '''
     Xception new
     For Xception, call
@@ -382,7 +414,7 @@ def model_xcept_w_unfreeze(lr=LR, unfreeze_ratio=1):
     # this is the model we will train
     model = Model(inputs=inputs,
                   outputs=predictions,
-                  name=f'Xception_freeze_{unfreeze_ratio}')
+                  name=f'Xception')
     model.compile(loss="categorical_crossentropy",
                   optimizer=optimizers.Adam(lr), metrics=["accuracy"])
 
@@ -406,7 +438,7 @@ def fine_tune_fit(model_fun, weights=None):
         model_name = model.name + \
             '_e' + str(EPOCHS) + \
             '_lr_'+str(lr) + \
-            '_fratio_'+str(ratio) + \
+            '_ufratio_'+str(ratio) + \
             '_i'+str(IMG_SIZE)
 
         # if weights:
@@ -510,7 +542,8 @@ earlystop = EarlyStopping(monitor='val_accuracy',
                           patience=5, restore_best_weights=True)
 callbacks_list = [checkpoint, earlystop]
 
-work_model = model_xcept_w_unfreeze
+# work_model = model_xcept_with_base
+work_model = model_efn_with_base
 model = fine_tune_fit(work_model)
 
 # single step
@@ -557,6 +590,11 @@ model = fine_tune_fit(work_model)
 # subprocess.run(['cp',
 #                '/content/drive/MyDrive/Colab Notebooks/kaggle/models/best_model.hdf5',
 #                '.'], capture_output=True)
+
+# save current model
+model.save('model_last.hdf5')
+# subprocess.run(['cp', 'model_last.hdf5',
+#                '/content/drive/MyDrive/Colab Notebooks/kaggle/models'], capture_output=True)
 
 # predict
 
