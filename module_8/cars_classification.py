@@ -34,8 +34,8 @@ from skimage import io
 from sklearn.model_selection import train_test_split
 #from tensorflow.keras.regularizers import l2
 from tensorflow.keras import optimizers
-from tensorflow.keras.applications import EfficientNetB6
-from tensorflow.keras.applications.xception import Xception, preprocess_input
+from tensorflow.keras.applications import EfficientNetB6, Xception
+from tensorflow.keras.applications.xception import preprocess_input
 from tensorflow.keras.callbacks import (Callback, EarlyStopping,
                                         LearningRateScheduler, ModelCheckpoint)
 from tensorflow.keras.preprocessing import image
@@ -90,14 +90,6 @@ def download_competition_data():
 
 
 def unzip_data(path_input='.', path_output='.'):
-    # unzip data
-    if not all([dir in os.listdir() for dir in ['train', 'test_upload']]):
-        for data_zip in ['train.zip', 'test.zip']:
-            with zipfile.ZipFile(f'{path_input}{data_zip}', 'r') as z:
-                z.extractall(path_output)
-
-
-def load_model_weights(path='.'):
     # unzip data
     if not all([dir in os.listdir() for dir in ['train', 'test_upload']]):
         for data_zip in ['train.zip', 'test.zip']:
@@ -204,6 +196,8 @@ def plot_im_size(df):
     plt.title('Image resolutions')
     plt.show()
     # pd.value_counts(size)
+    # print("Наиболее распространенные разрешения")
+    # print(pd.value_counts(size).head(10))
 
 
 def plot_images_from_generator(generator):
@@ -283,47 +277,21 @@ def compile_model(model, lr=LR):
                   metrics=["accuracy"])
 
 
-def model_efn(lr=1e-4):
-    '''
-    EfficientNetB6
-    EfficientNet models expect their inputs to be float tensors of pixels with values in the [0-255] range.
-    '''
-    # base_model = efn.EfficientNetB6(weights='imagenet', include_top=False, input_shape=input_shape)
-    base_model = EfficientNetB6(
-        weights='imagenet', include_top=False, input_shape=input_shape, pooling='avg')
-
-    # base_model.trainable = False
-
-    x = base_model.output
-    # x = GlobalAveragePooling2D()(x)
-    # let's add a fully-connected layer
-    x = Dense(256, activation='relu')(x)
-    x = BatchNormalization()(x)
-    x = Dropout(0.25)(x)
-    # and a logistic layer -- let's say we have 10 classes
-    predictions = Dense(CLASS_NUM, activation='softmax')(x)
-
-    # this is the model we will train
-    model = Model(inputs=base_model.input, outputs=predictions)
-    model.compile(loss="categorical_crossentropy",
-                  optimizer=optimizers.Adam(lr), metrics=["accuracy"])
-
-    return model
-
-
-def model_efn_with_base(lr=1e-4):
+def models_efn_base(input_shape, lr=1e-4):
     '''
     EfficientNetB6 +batchnorm
-    EfficientNet models expect their inputs to be float tensors of pixels with values in the [0-255] range.
+    EfficientNet models expect their inputs to be
+    float tensors of pixels with values in the [0-255] range.
     '''
-    # base_model = efn.EfficientNetB6(weights='imagenet', include_top=False, input_shape=input_shape)
-    base_model = EfficientNetB6(
-        weights='imagenet', include_top=False, input_shape=input_shape, pooling='avg')
+
+    base_model = EfficientNetB6(weights='imagenet',
+                                include_top=False,
+                                input_shape=input_shape,
+                                pooling='avg')
 
     # base_model.trainable = False
 
     x = base_model.output
-    # x = GlobalAveragePooling2D()(x)
     # let's add a fully-connected layer
     x = Dense(256, activation='relu')(x)
     x = BatchNormalization()(x)
@@ -336,47 +304,13 @@ def model_efn_with_base(lr=1e-4):
                   outputs=predictions,
                   name=f'EfficientNetB6')
     model.compile(loss="categorical_crossentropy",
-                  optimizer=optimizers.Adam(lr), metrics=["accuracy"])
+                  optimizer=optimizers.Adam(lr),
+                  metrics=["accuracy"])
 
     return model, base_model
 
 
-def model_xcept(lr=LR):
-    '''
-    Xception
-    For Xception, call
-    tf.keras.applications.xception.preprocess_input 
-    on your inputs before passing them to the 
-    model.xception.preprocess_input will scale input 
-    pixels between -1 and 1.
-    '''
-    base_model = Xception(weights='imagenet',
-                          include_top=False, input_shape=input_shape)
-
-    # base_model.summary()
-    # Рекомендация: Попробуйте и другие архитектуры сетей
-    # Устанавливаем новую "голову" (head)
-
-    x = base_model.output
-    x = GlobalAveragePooling2D()(x)
-    # let's add a fully-connected layer
-    x = Dense(256, activation='relu')(x)
-    x = BatchNormalization()(x)
-    x = Dropout(0.25)(x)
-    # and a logistic layer -- let's say we have 10 classes
-    predictions = Dense(CLASS_NUM, activation='softmax')(x)
-
-    # this is the model we will train
-    model = Model(inputs=base_model.input, outputs=predictions)
-    model.compile(loss="categorical_crossentropy",
-                  optimizer=optimizers.Adam(lr), metrics=["accuracy"])
-
-    # model.summary()
-    # Рекомендация: Попробуйте добавить Batch Normalization
-    return model
-
-
-def model_xcept_with_base(lr=LR, unfreeze_ratio=1):
+def models_xception_base(input_shape, lr=LR):
     '''
     Xception new
     For Xception, call
@@ -394,15 +328,8 @@ def model_xcept_with_base(lr=LR, unfreeze_ratio=1):
     inputs = keras.Input(shape=input_shape)
     x = tf.cast(inputs, tf.float32)
     x = preprocess_input(x)
-    # We make sure that the base_model is running in inference mode here,
-    # by passing `training=False`. This is important for fine-tuning, as you will
-    # learn in a few paragraphs.
-    # x = base_model(x, training=True)
     x = base_model(x, training=False)
-
     # base_model.summary()
-    # x = base_model.output
-    # x = GlobalAveragePooling2D()(x)
 
     # let's add a fully-connected layer
     x = Dense(256, activation='relu')(x)
@@ -419,24 +346,25 @@ def model_xcept_with_base(lr=LR, unfreeze_ratio=1):
                   optimizer=optimizers.Adam(lr), metrics=["accuracy"])
 
     # model.summary()
-    # Рекомендация: Попробуйте добавить Batch Normalization
     return model, base_model
 
 
-def fine_tune_fit(model_fun, weights=None):
-    # step - (lr, unfreeze_ratio)
-    steps = [(1e-3, 0),
-             (1e-4, 0.5),
-             (1e-5, 1)]
+def fine_tune_fit(model_fun, input_shape, steps=[]):
+    # step - (lr, unfreeze_ratio, epochs)
+    # steps = [(1e-3, 0, 10),
+    #          (1e-4, 0, 5),
+    #          (1e-4, 0.25, 5),
+    #          (1e-4, 0.5, 5),
+    #          (1e-5, 1, 5)]
 
-    model, base_model = model_fun()
+    model, base_model = model_fun(input_shape)
 
-    for step, (lr, ratio) in enumerate(steps):
+    for step, (lr, ratio, epochs) in enumerate(steps):
 
         unfreeze_model(base_model, ratio)
         compile_model(model, lr)
         model_name = model.name + \
-            '_e' + str(EPOCHS) + \
+            '_e' + str(epochs) + \
             '_lr_'+str(lr) + \
             '_ufratio_'+str(ratio) + \
             '_i'+str(IMG_SIZE)
@@ -456,7 +384,7 @@ def fine_tune_fit(model_fun, weights=None):
         history = model.fit(
             train_generator,
             validation_data=val_generator,
-            epochs=EPOCHS,
+            epochs=epochs,
             callbacks=callbacks_list
         )
 
@@ -467,14 +395,68 @@ def fine_tune_fit(model_fun, weights=None):
         plot_history(history,
                      model_name,
                      f'Accuracy step {step}: {scores[1]*100:.2f}')
-        weights = 'best_model.hdf5'
+        # weights = 'best_model.hdf5'
+        print(f'Running time: {datetime.now() - start_time}')
 
-        if IS_ENV_COLAB:
-            subprocess.run(['cp', 'best_model.hdf5',
-                            '/content/drive/MyDrive/Colab Notebooks/kaggle/models'], capture_output=True)
+    if IS_ENV_COLAB:
+        subprocess.run(['cp', 'best_model.hdf5',
+                        '/content/drive/MyDrive/Colab Notebooks/kaggle/models'], capture_output=True)
 
-            subprocess.run(['cp'] + glob.glob('*.png') +
-                           ['/content/drive/MyDrive/Colab Notebooks/kaggle/models'], capture_output=True)
+        subprocess.run(['cp'] + glob.glob('*.png') +
+                        ['/content/drive/MyDrive/Colab Notebooks/kaggle/models'], capture_output=True)
+
+    return model
+
+
+def fit(model_fun, input_shape, step, weights=None):
+    # step - (lr, unfreeze_ratio, epochs)
+
+    model, base_model = model_fun(input_shape)
+
+    (lr, ratio, epochs) = step
+
+    unfreeze_model(base_model, ratio)
+    compile_model(model, lr)
+    model_name = model.name + \
+        '_e' + str(epochs) + \
+        '_lr_'+str(lr) + \
+        '_unfratio_'+str(ratio) + \
+        '_i'+str(IMG_SIZE)
+
+    if weights:
+        # load weights from 'best_model.hdf5'
+        model.load_weights(weights)
+
+    scores = model.evaluate(val_generator, verbose=1)
+    print(f"{'-'*40}\n" +
+            f"before {step} training\n" +
+            f"Accuracy: {scores[1]*100:.2f}\n" +
+            f"{'-'*40}\n" +
+            f"Start training. Unfreeze: {ratio}, LR: {lr}\n" +
+            f"{'-'*40}")
+
+    history = model.fit(
+        train_generator,
+        validation_data=val_generator,
+        epochs=epochs,
+        callbacks=callbacks_list
+    )
+
+    scores = model.evaluate(val_generator, verbose=1)
+    print(f"{'-'*21}\n" +
+            f"Accuracy step {step}: {scores[1]*100:.2f}\n" +
+            f"{'-'*21}")
+    plot_history(history,
+                    model_name,
+                    f'Accuracy step {step}: {scores[1]*100:.2f}')
+    weights = 'best_model.hdf5'
+
+    if IS_ENV_COLAB:
+        subprocess.run(['cp', 'best_model.hdf5',
+                        '/content/drive/MyDrive/Colab Notebooks/kaggle/models'], capture_output=True)
+
+        subprocess.run(['cp'] + glob.glob('*.png') +
+                        ['/content/drive/MyDrive/Colab Notebooks/kaggle/models'], capture_output=True)
 
     return model
 
@@ -542,9 +524,31 @@ earlystop = EarlyStopping(monitor='val_accuracy',
                           patience=5, restore_best_weights=True)
 callbacks_list = [checkpoint, earlystop]
 
-# work_model = model_xcept_with_base
-work_model = model_efn_with_base
-model = fine_tune_fit(work_model)
+# work_model = models_xception_base
+work_model = models_efn_base
+# step - (lr, unfreeze_ratio, epochs)
+steps = [(1e-3, 0, 10),
+         (1e-4, 0, 10),
+         (1e-4, 0.25, 5),
+         (1e-4, 0.5, 5),
+         (1e-5, 1, 5)]
+
+model = fine_tune_fit(work_model, input_shape, steps)
+predict_submission(model, generator=sub_generator, name=model.name)
+model.save('model_224px.hdf5')
+print(f'Running time: {datetime.now() - start_time}')
+
+# single step with hi image rezolution
+IMG_SIZE             = 512 # какого размера подаем изображения в сеть
+IMG_CHANNELS         = 3   # у RGB 3 канала
+input_shape          = (IMG_SIZE, IMG_SIZE, IMG_CHANNELS)
+
+# step=steps[-1]
+step = (1e-5, 1, 15)
+model = fit(work_model, input_shape, step, weights='best_model.hdf5')
+# model = fit(work_model, input_shape, step)
+# input_shape, step, weights
+# 'best_model.hdf5'
 
 # single step
 
