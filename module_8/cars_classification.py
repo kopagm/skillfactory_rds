@@ -60,19 +60,20 @@ PYTHONHASHSEED = 0
 
 # kaggle
 DATA_PATH_KAGGLE = '../input/'  # path for input data
-PATH_KAGGLE = '../car/'  # path for unpacked data
+IMG_PATH_KAGGLE = '../car/'  # path for unpacked data
 # colab
 DATA_PATH_COLAB = './'
-PATH_COLAB = './'
+IMG_PATH_COLAB = './car/'
 
 IS_ENV_COLAB = 'google.colab' in sys.modules
 
 if IS_ENV_COLAB:
-    DATA_PATH = DATA_PATH_COLAB
-    PATH = PATH_COLAB
+    DATA_PATH, IMG_PATH = DATA_PATH_COLAB, IMG_PATH_COLAB
 else:
-    DATA_PATH = DATA_PATH_KAGGLE
-    PATH = PATH_KAGGLE
+    DATA_PATH, IMG_PATH = DATA_PATH_KAGGLE, IMG_PATH_KAGGLE
+
+IMG_TRAIN_PATH = IMG_PATH + 'train'
+IMG_MOCK_TRAIN_PATH = IMG_PATH + 'mock_train'
 
 
 def download_competition_data():
@@ -88,32 +89,43 @@ def download_competition_data():
 
 def unzip_data(path_input='.', path_output='.'):
     # unzip data
-    if not all([dir in os.listdir() for dir in ['train', 'test_upload']]):
+    if not os.path.exists(path_output):
+        os.makedirs(path_output)
+    if not all([dir in os.listdir(path_output) for dir in ['train', 'test_upload']]):
         for data_zip in ['train.zip', 'test.zip']:
             with zipfile.ZipFile(f'{path_input}{data_zip}', 'r') as z:
                 z.extractall(path_output)
 
 
-def load_data():
+def load_train_test_from_csv(path=DATA_PATH):
     """
     load DataFrames from files (train_df, sample_submission)
     """
-    def load_from_files(path=''):
-        train_df = pd.read_csv(f'{path}train.csv')
-        sample_submission = pd.read_csv(f'{path}sample-submission.csv')
-        return (train_df, sample_submission)
+    train_df = pd.read_csv(f'{path}train.csv')
+    sample_submission = pd.read_csv(f'{path}sample-submission.csv')
+    return (train_df, sample_submission)
+
+def decommpress_images():
+    """
+    load DataFrames from files (train_df, sample_submission)
+    """
 
     if IS_ENV_COLAB:
         # running in colab
         download_competition_data()
-    # else:
-    #     # running in kaggel
-    #     os.makedirs(PATH, exist_ok=False)
-    unzip_data(DATA_PATH, PATH)
-    return load_from_files(DATA_PATH)
+    unzip_data(DATA_PATH, IMG_PATH)
+    return load_train_test_from_csv(DATA_PATH)
 
 
-def make_mock_data(src, dst, n_samples=5):
+def make_mock_data(n_samples=5):
+    """
+    Make PATH\mock_train with
+    the same tree structure as PATH\train,
+    copy n_samples to each directory. 
+    """
+    src = IMG_PATH + 'train'
+    dst = IMG_PATH + 'mock_train'
+
     for root, dirs, files in os.walk(src):
         new_dir = root.replace(src, dst)
         if not os.path.exists(new_dir):
@@ -184,7 +196,7 @@ def plot_images():
     # random_image_cat = random_image['Category'].values
     for index, (id, cat) in enumerate(zip(random_image['Id'], random_image['Category'])):
         # for index, path in enumerate(random_image_paths):
-        im = PIL.Image.open(f'{PATH}train/{cat}/{id}')
+        im = PIL.Image.open(f'{IMG_PATH}train/{cat}/{id}')
         plt.subplot(3, 3, index+1)
         plt.imshow(im)
         plt.title('Class: '+str(cat))
@@ -193,7 +205,7 @@ def plot_images():
 
 
 def plot_im_size(df):
-    size = [PIL.Image.open(f'{PATH}train/{cat}/{id}').size for id,
+    size = [PIL.Image.open(f'{IMG_PATH}train/{cat}/{id}').size for id,
             cat in zip(df['Id'], df['Category'])]
     s_x = list(map(lambda x: x[0], size))
     s_y = list(map(lambda x: x[1], size))
@@ -213,6 +225,11 @@ def build_generators():
     for train, validation, submission, tta submission:
     train_generator, val_generator, sub_generator, tta_generator
     """
+
+    # path_train = IMG_PATH+'train/'
+    path_train = IMG_TRAIN_PATH
+    path_test = IMG_PATH+'test_upload/'
+
     train_datagen = ImageDataGenerator(  # rescale=1. / 255,
         rotation_range=50,
         shear_range=0.2,
@@ -234,7 +251,8 @@ def build_generators():
                                      height_shift_range=0.1)
 
     train_generator = train_datagen.flow_from_directory(
-        PATH+'train/',      # директория где расположены папки с картинками
+        # PATH+'train/',      # директория где расположены папки с картинками
+        path_train,
         target_size=(IMG_SIZE, IMG_SIZE),
         batch_size=BATCH_SIZE,
         class_mode='categorical',
@@ -243,7 +261,8 @@ def build_generators():
         subset='training')  # set as training data
 
     val_generator = train_datagen.flow_from_directory(
-        PATH+'train/',
+        # PATH+'train/',
+        path_train,
         target_size=(IMG_SIZE, IMG_SIZE),
         batch_size=BATCH_SIZE,
         class_mode='categorical',
@@ -252,7 +271,8 @@ def build_generators():
 
     sub_generator = test_datagen.flow_from_dataframe(
         dataframe=sample_submission,
-        directory=PATH+'test_upload/',
+        # directory=PATH+'test_upload/',
+        directory=path_test,
         x_col="Id",
         y_col=None,
         shuffle=False,
@@ -263,7 +283,8 @@ def build_generators():
 
     tta_generator = tta_datagen.flow_from_dataframe(
         dataframe=sample_submission,
-        directory=PATH+'test_upload/',
+        # directory=PATH+'test_upload/',
+        directory=path_test,
         x_col="Id",
         y_col=None,
         shuffle=False,
@@ -496,7 +517,7 @@ def fine_tune_fit(model_input, input_shape,
 
 
 # def run_all_parts():
-#     train_df, sample_submission = load_data()
+#     train_df, sample_submission = load_train_test_from_csv()
 #     callbacks_list = create_callbacks()
 
 #     work_model = models_xception_base
@@ -553,7 +574,7 @@ def fine_tune_fit(model_input, input_shape,
 #     predict_efn_tta = predict_tta(model, tta_steps=10)
 
 #     pred_sum = predict_xcept + predict_xcept_tta + predict_efn + predict_efn_tta
-#     create_submission(predictions_sum, name='ensemble')
+#     create_submission(pred_sum, name='ensemble')
 
 
 """
@@ -564,47 +585,82 @@ start_time = datetime.now()
 
 K.clear_session()
 
-train_df, sample_submission = load_data()
-# plot_images()
-plot_im_size(train_df)
+decommpress_images()
 
-(train_generator, val_generator,
- sub_generator, tta_generator) = build_generators()
+train_df, sample_submission = load_train_test_from_csv()
+# plot_images()
+# plot_im_size(train_df)
+
+MOCK_DATA = True
+# MOCK = False
+if MOCK_DATA:
+    make_mock_data(n_samples=64)
+    sample_submission = sample_submission[:20]
+    IMG_TRAIN_PATH = IMG_MOCK_TRAIN_PATH
+
+    train_df, sample_submission = load_train_test_from_csv()
+    callbacks_list = create_callbacks()
+
+    work_model = models_xception_base
+    BATCH_SIZE = 64
+    IMG_SIZE = 224  # какого размера подаем изображения в сеть
+    input_shape = (IMG_SIZE, IMG_SIZE, IMG_CHANNELS)
+    # list of steps (learning rate, unfreeze_ratio, epochs)
+    #  unfreeze_ratio: 0.0 - freeze, 1.0 - unfreeze base model
+    steps = [(1e-3, 0, 10),
+            (1e-4, 0, 10),
+            (1e-4, 0.25, 5),
+            (1e-4, 0.5, 5),
+            (1e-5, 1, 5)]
+    (train_generator, val_generator,
+    sub_generator, tta_generator) = build_generators()
+    model = fine_tune_fit(work_model, input_shape, steps)
+
+    BATCH_SIZE = 32
+    IMG_SIZE = 300  # какого размера подаем изображения в сеть
+    input_shape = (IMG_SIZE, IMG_SIZE, IMG_CHANNELS)
+    # first step = previous step for weights loading
+    steps = [(1e-5, 1, 5)]
+    (train_generator, val_generator,
+    sub_generator, tta_generator) = build_generators()
+    model = fine_tune_fit(work_model, input_shape, steps)
+
+    predict_xcept = predict_submit(model, name=model.name)
+    predict_xcept_tta = predict_tta(model, tta_steps=10)
+
+    work_model = models_efn_base
+    BATCH_SIZE = 16
+    IMG_SIZE = 224  # какого размера подаем изображения в сеть
+    input_shape = (IMG_SIZE, IMG_SIZE, IMG_CHANNELS)
+    # list of steps (learning rate, unfreeze_ratio, epochs)
+    #  unfreeze_ratio: 0.0 - freeze, 1.0 - unfreeze base model
+    steps = [(1e-3, 0, 10),
+            (1e-4, 0, 10),
+            (1e-4, 0.25, 5),
+            (1e-4, 0.5, 5),
+            (1e-5, 1, 5)]
+    (train_generator, val_generator,
+    sub_generator, tta_generator) = build_generators()
+    model = fine_tune_fit(work_model, input_shape, steps)
+    BATCH_SIZE = 4
+    IMG_SIZE = 300  # какого размера подаем изображения в сеть
+    input_shape = (IMG_SIZE, IMG_SIZE, IMG_CHANNELS)
+    # first step = previous step for weights loading
+    steps = [(1e-5, 1, 5)]
+    (train_generator, val_generator,
+    sub_generator, tta_generator) = build_generators()
+    model = fine_tune_fit(work_model, input_shape, steps)
+
+    predict_efn = predict_submit(model, name=model.name)
+    predict_efn_tta = predict_tta(model, tta_steps=10)
+
+    pred_sum = predict_xcept + predict_xcept_tta + predict_efn + predict_efn_tta
+    create_submission(pred_sum, name='ensemble')
+
 
 # plot_images_from_generator(train_generator)
 # plot_images_from_generator(val_generator)
-
-callbacks_list = create_callbacks()
-
-work_model = models_xception_base
-# work_model = models_efn_base
-
-# list of steps (learning rate, unfreeze_ratio, epochs)
-#  unfreeze_ratio: 0.0 - freeze, 1.0 - unfreeze base model
-# steps = [(1e-3, 0, 10),
-#          (1e-4, 0, 10),
-#          (1e-4, 0.25, 5),
-#          (1e-4, 0.5, 5),
-#          (1e-5, 1, 5)]
-
-# model = fine_tune_fit(work_model, input_shape, steps)
-
 # model.save('model_224px.hdf5')
-# print(f'Running time: {datetime.now() - start_time}')
-
-# single step with hi image rezolution
-
-BATCH_SIZE = 64
-IMG_SIZE = 300  # какого размера подаем изображения в сеть
-IMG_CHANNELS = 3   # у RGB 3 канала
-input_shape = (IMG_SIZE, IMG_SIZE, IMG_CHANNELS)
-
-(train_generator, val_generator,
- sub_generator, tta_generator) = build_generators()
-
-steps = [(1e-5, 1, 15)]
-model = fine_tune_fit(work_model, input_shape, steps, weights=None)
-
 # subprocess.run(['cp', 'best_model.hdf5',
 #                '/content/drive/MyDrive/Colab Notebooks/kaggle/models'], capture_output=True)
 
@@ -616,7 +672,7 @@ model = fine_tune_fit(work_model, input_shape, steps, weights=None)
 #                '.'], capture_output=True)
 
 # save current model
-model.save('model_last.hdf5')
+# model.save('model_last.hdf5')
 # subprocess.run(['cp', 'model_last.hdf5',
 #                '/content/drive/MyDrive/Colab Notebooks/kaggle/models'], capture_output=True)
 
@@ -631,5 +687,3 @@ print(f'Running time: {datetime.now() - start_time}')
 
 # if __name__ == '__main__':
 #     main()
-
-os.walk('.')
