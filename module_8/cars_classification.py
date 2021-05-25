@@ -2,13 +2,12 @@ import csv
 import glob
 import os
 import pickle
+import shutil
 import subprocess
 import sys
 import tarfile
 import zipfile
 from datetime import datetime
-
-from pandas.core.indexes import base
 
 # import efficientnet.tfkeras as efn
 import keras
@@ -29,6 +28,7 @@ import tensorflow.keras.models as M
 from keras import *
 from keras.layers import *
 from keras.models import load_model
+from pandas.core.indexes import base
 from PIL import ImageFilter, ImageOps
 from skimage import io
 from sklearn.model_selection import train_test_split
@@ -41,41 +41,38 @@ from tensorflow.keras.callbacks import (Callback, EarlyStopping,
 from tensorflow.keras.preprocessing import image
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
 
-#from tf.keras.applications.inception_v3 import Inception_v3
-
-
-EPOCHS = 10  # эпох на обучение
+# EPOCHS = 10  # эпох на обучение
 # BATCH_SIZE = 64  # Xception # уменьшаем batch если сеть большая, иначе не влезет в память на GPU
-BATCH_SIZE = 16  # EfficientNetB6
-LR = 1e-4
+# BATCH_SIZE = 16  # EfficientNetB6
+# LR = 1e-4
 VAL_SPLIT = 0.15  # сколько данных выделяем на тест = 15%
 
 CLASS_NUM = 10  # количество классов в нашей задаче
-IMG_SIZE = 224  # какого размера подаем изображения в сеть
+# IMG_SIZE = 224  # какого размера подаем изображения в сеть
 # IMG_SIZE = 64  # какого размера подаем изображения в сеть
 
 IMG_CHANNELS = 3   # у RGB 3 канала
-input_shape = (IMG_SIZE, IMG_SIZE, IMG_CHANNELS)
+# input_shape = (IMG_SIZE, IMG_SIZE, IMG_CHANNELS)
 
 RANDOM_SEED = 42
 np.random.seed(RANDOM_SEED)
 PYTHONHASHSEED = 0
 
 # kaggle
-DATA_PATH_KAGGLE = '../input/'
-PATH_KAGGLE = '../car/'  # рабочая директория
+DATA_PATH_KAGGLE = '../input/'  # path for input data
+PATH_KAGGLE = '../car/'  # path for unpacked data
 # colab
 DATA_PATH_COLAB = './'
-PATH_COLAB = './'  # рабочая директория
+PATH_COLAB = './'
 
 IS_ENV_COLAB = 'google.colab' in sys.modules
 
 if IS_ENV_COLAB:
     DATA_PATH = DATA_PATH_COLAB
-    PATH = PATH_COLAB  # рабочая директория
+    PATH = PATH_COLAB
 else:
     DATA_PATH = DATA_PATH_KAGGLE
-    PATH = PATH_KAGGLE  # рабочая директория
+    PATH = PATH_KAGGLE
 
 
 def download_competition_data():
@@ -116,8 +113,19 @@ def load_data():
     return load_from_files(DATA_PATH)
 
 
-def predict_submission(model, generator, name='new'):
-    predictions = model.predict(generator, verbose=1)
+def make_mock_data(src, dst, n_samples=5):
+    for root, dirs, files in os.walk(src):
+        new_dir = root.replace(src, dst)
+        if not os.path.exists(new_dir):
+            os.makedirs(new_dir)
+        for file in files[:n_samples]:
+            shutil.copy2(f'{root}/{file}', new_dir)
+
+
+def create_submission(predictions, name=''):
+    """
+    Create submission file from prediction
+    """
     predictions = np.argmax(predictions, axis=-1)  # multiple categories
     label_map = (train_generator.class_indices)
     label_map = dict((v, k) for k, v in label_map.items())  # flip k,v
@@ -125,42 +133,41 @@ def predict_submission(model, generator, name='new'):
 
     filenames_with_dir = sub_generator.filenames
     submission = pd.DataFrame(
-        {'Id': filenames_with_dir, 'Category': predictions}, columns=['Id', 'Category'])
+        {'Id': filenames_with_dir,
+         'Category': predictions},
+        columns=['Id', 'Category'])
     submission['Id'] = submission['Id'].replace('test_upload/', '')
     # submission.to_csv('submission.csv', index=False)
     submission.to_csv(f'{name}_submission.csv', index=False)
     if IS_ENV_COLAB:
-        subprocess.run(['cp', f'{name}_submission.csv',
-                        '/content/drive/MyDrive/Colab Notebooks/kaggle/models'], capture_output=True)
+        subprocess.run(['cp',
+                        f'{name}_submission.csv',
+                        '/content/drive/MyDrive/Colab Notebooks/kaggle/models'],
+                       capture_output=True)
 
 
-def predict_tta(model, generator, name='new', tta_steps=10):
+def predict_submit(model, name=''):
     """
-    from flowers
-    in process
+    Create submission file from prediction,
+    return predictions
+    """
+    predictions = model.predict(sub_generator, verbose=1)
+    create_submission(predictions, name=name)
+    return predictions
+
+
+def predict_tta(model, tta_steps=10):
+    """
+    Prediction with TTA
     """
     predictions = []
 
     for i in range(tta_steps):
-        preds = model.predict(generator, verbose=1)
+        preds = model.predict(tta_generator, verbose=1)
         predictions.append(preds)
 
     pred = np.mean(predictions, axis=0)
-
-    predictions = np.argmax(predictions, axis=-1)  # multiple categories
-    label_map = (train_generator.class_indices)
-    label_map = dict((v, k) for k, v in label_map.items())  # flip k,v
-    predictions = [label_map[k] for k in predictions]
-
-    filenames_with_dir = sub_generator.filenames
-    submission = pd.DataFrame(
-        {'Id': filenames_with_dir, 'Category': predictions}, columns=['Id', 'Category'])
-    submission['Id'] = submission['Id'].replace('test_upload/', '')
-    # submission.to_csv('submission.csv', index=False)
-    submission.to_csv(f'{name}_submission.csv', index=False)
-    if IS_ENV_COLAB:
-        subprocess.run(['cp', f'{name}_submission.csv',
-                        '/content/drive/MyDrive/Colab Notebooks/kaggle/models'], capture_output=True)
+    return pred
 
 
 def imshow(image_RGB):
@@ -200,6 +207,75 @@ def plot_im_size(df):
     # print(pd.value_counts(size).head(10))
 
 
+def build_generators():
+    """
+    Build tuple ImageDataGenerators
+    for train, validation, submission, tta submission:
+    train_generator, val_generator, sub_generator, tta_generator
+    """
+    train_datagen = ImageDataGenerator(  # rescale=1. / 255,
+        rotation_range=50,
+        shear_range=0.2,
+        zoom_range=[0.75, 1.25],
+        brightness_range=[0.5, 1.5],
+        width_shift_range=0.1,
+        height_shift_range=0.1,
+        horizontal_flip=False,
+        validation_split=VAL_SPLIT)
+
+    test_datagen = ImageDataGenerator()  # rescale=1. / 255)
+
+    tta_datagen = ImageDataGenerator(rescale=1. / 255,
+                                     rotation_range=90,
+                                     shear_range=0.2,
+                                     zoom_range=[0.75, 1.25],
+                                     brightness_range=[0.5, 1.5],
+                                     width_shift_range=0.1,
+                                     height_shift_range=0.1)
+
+    train_generator = train_datagen.flow_from_directory(
+        PATH+'train/',      # директория где расположены папки с картинками
+        target_size=(IMG_SIZE, IMG_SIZE),
+        batch_size=BATCH_SIZE,
+        class_mode='categorical',
+        shuffle=True,
+        seed=RANDOM_SEED,
+        subset='training')  # set as training data
+
+    val_generator = train_datagen.flow_from_directory(
+        PATH+'train/',
+        target_size=(IMG_SIZE, IMG_SIZE),
+        batch_size=BATCH_SIZE,
+        class_mode='categorical',
+        shuffle=True, seed=RANDOM_SEED,
+        subset='validation')  # set as validation data
+
+    sub_generator = test_datagen.flow_from_dataframe(
+        dataframe=sample_submission,
+        directory=PATH+'test_upload/',
+        x_col="Id",
+        y_col=None,
+        shuffle=False,
+        class_mode=None,
+        seed=RANDOM_SEED,
+        target_size=(IMG_SIZE, IMG_SIZE),
+        batch_size=BATCH_SIZE,)
+
+    tta_generator = tta_datagen.flow_from_dataframe(
+        dataframe=sample_submission,
+        directory=PATH+'test_upload/',
+        x_col="Id",
+        y_col=None,
+        shuffle=False,
+        class_mode=None,
+        seed=RANDOM_SEED,
+        target_size=(IMG_SIZE, IMG_SIZE),
+        batch_size=BATCH_SIZE)
+
+    return (train_generator, val_generator,
+            sub_generator, tta_generator)
+
+
 def plot_images_from_generator(generator):
     x, y = generator.next()
     print('Пример картинок из train_generator')
@@ -215,7 +291,7 @@ def plot_images_from_generator(generator):
 
 
 def plot_history(history, model_name='model', score=''):
-    now = datetime.now().strftime("%d_%m_%Y_%H:%M:%S")
+    now = datetime.now().strftime("%d_%m_%Y_%H_%M_%S")
 
     plt.figure(figsize=(10, 5))
     acc = history.history['accuracy']
@@ -242,16 +318,27 @@ def plot_history(history, model_name='model', score=''):
     plt.show()
 
 
-def load_model():
-    subprocess.run(['cp', '/content/drive/MyDrive/Colab Notebooks/kaggle/models/best_model_3.hdf5',
-                    'best_model.hdf5'], capture_output=True)
-    model = tf.keras.models.load_model('best_model.hdf5')
+def load_model(path='last_model.hdf5'):
+    # subprocess.run(['cp', '/content/drive/MyDrive/Colab Notebooks/kaggle/models/best_model_3.hdf5',
+    #                 'best_model.hdf5'], capture_output=True)
+    # model = tf.keras.models.load_model('best_model.hdf5')
+    model = tf.keras.models.load_model(path)
     return model
 
 
 def print_layers(model):
     for layer in model.layers:
         print(layer, layer.trainable)
+
+
+def create_callbacks():
+    checkpoint = ModelCheckpoint('best_model.hdf5', monitor=[
+        'val_accuracy'], verbose=1, mode='max')
+    earlystop = EarlyStopping(monitor='val_accuracy',
+                              patience=5,
+                              restore_best_weights=True)
+    callbacks_list = [checkpoint, earlystop]
+    return callbacks_list
 
 
 def unfreeze_model(model, ratio=1):
@@ -268,7 +355,7 @@ def unfreeze_model(model, ratio=1):
         model.trainable = False
 
 
-def compile_model(model, lr=LR):
+def compile_model(model, lr=1e-3):
     '''
     Compile model
     '''
@@ -310,7 +397,7 @@ def models_efn_base(input_shape, lr=1e-4):
     return model, base_model
 
 
-def models_xception_base(input_shape, lr=LR):
+def models_xception_base(input_shape, lr=1e-3):
     '''
     Xception new
     For Xception, call
@@ -349,15 +436,17 @@ def models_xception_base(input_shape, lr=LR):
     return model, base_model
 
 
-def fine_tune_fit(model_fun, input_shape, steps=[]):
-    # step - (lr, unfreeze_ratio, epochs)
-    # steps = [(1e-3, 0, 10),
-    #          (1e-4, 0, 5),
-    #          (1e-4, 0.25, 5),
-    #          (1e-4, 0.5, 5),
-    #          (1e-5, 1, 5)]
+def fine_tune_fit(model_input, input_shape,
+                  steps=[], weights=None):
+    """
+    Build and fine-tune model over list of steps.
+    Each step - (lr, unfreeze_ratio, epochs)
+    """
 
-    model, base_model = model_fun(input_shape)
+    model, base_model = model_input(input_shape)
+    if weights:
+        # load weights from 'best_model.hdf5'
+        model.load_weights(weights)
 
     for step, (lr, ratio, epochs) in enumerate(steps):
 
@@ -369,15 +458,11 @@ def fine_tune_fit(model_fun, input_shape, steps=[]):
             '_ufratio_'+str(ratio) + \
             '_i'+str(IMG_SIZE)
 
-        # if weights:
-        #     # load weights from 'best_model.hdf5'
-        #     model.load_weights(weights)
-
-        scores = model.evaluate(val_generator, verbose=1)
+        # scores = model.evaluate(val_generator, verbose=1)
         print(f"{'-'*40}\n" +
-              f"before {step} training\n" +
-              f"Accuracy: {scores[1]*100:.2f}\n" +
-              f"{'-'*40}\n" +
+              #   f"before {step} training\n" +
+              #   f"Accuracy: {scores[1]*100:.2f}\n" +
+              #   f"{'-'*40}\n" +
               f"Start training. Unfreeze: {ratio}, LR: {lr}\n" +
               f"{'-'*40}")
 
@@ -388,6 +473,9 @@ def fine_tune_fit(model_fun, input_shape, steps=[]):
             callbacks=callbacks_list
         )
 
+        model.save(f'{model_name}_step{step}.hdf5')
+        model.load_weights('best_model.hdf5')
+
         scores = model.evaluate(val_generator, verbose=1)
         print(f"{'-'*21}\n" +
               f"Accuracy step {step}: {scores[1]*100:.2f}\n" +
@@ -395,7 +483,6 @@ def fine_tune_fit(model_fun, input_shape, steps=[]):
         plot_history(history,
                      model_name,
                      f'Accuracy step {step}: {scores[1]*100:.2f}')
-        # weights = 'best_model.hdf5'
         print(f'Running time: {datetime.now() - start_time}')
 
     if IS_ENV_COLAB:
@@ -403,62 +490,70 @@ def fine_tune_fit(model_fun, input_shape, steps=[]):
                         '/content/drive/MyDrive/Colab Notebooks/kaggle/models'], capture_output=True)
 
         subprocess.run(['cp'] + glob.glob('*.png') +
-                        ['/content/drive/MyDrive/Colab Notebooks/kaggle/models'], capture_output=True)
+                       ['/content/drive/MyDrive/Colab Notebooks/kaggle/models'], capture_output=True)
 
     return model
 
 
-def fit(model_fun, input_shape, step, weights=None):
-    # step - (lr, unfreeze_ratio, epochs)
+# def run_all_parts():
+#     train_df, sample_submission = load_data()
+#     callbacks_list = create_callbacks()
 
-    model, base_model = model_fun(input_shape)
+#     work_model = models_xception_base
+#     BATCH_SIZE = 64
+#     IMG_SIZE = 224  # какого размера подаем изображения в сеть
+#     input_shape = (IMG_SIZE, IMG_SIZE, IMG_CHANNELS)
+#     # list of steps (learning rate, unfreeze_ratio, epochs)
+#     #  unfreeze_ratio: 0.0 - freeze, 1.0 - unfreeze base model
+#     steps = [(1e-3, 0, 10),
+#             (1e-4, 0, 10),
+#             (1e-4, 0.25, 5),
+#             (1e-4, 0.5, 5),
+#             (1e-5, 1, 5)]
+#     (train_generator, val_generator,
+#     sub_generator, tta_generator) = build_generators()
+#     model = fine_tune_fit(work_model, input_shape, steps)
 
-    (lr, ratio, epochs) = step
+#     BATCH_SIZE = 32
+#     IMG_SIZE = 300  # какого размера подаем изображения в сеть
+#     input_shape = (IMG_SIZE, IMG_SIZE, IMG_CHANNELS)
+#     # first step = previous step for weights loading
+#     steps = [(1e-5, 1, 5)]
+#     (train_generator, val_generator,
+#     sub_generator, tta_generator) = build_generators()
+#     model = fine_tune_fit(work_model, input_shape, steps)
 
-    unfreeze_model(base_model, ratio)
-    compile_model(model, lr)
-    model_name = model.name + \
-        '_e' + str(epochs) + \
-        '_lr_'+str(lr) + \
-        '_unfratio_'+str(ratio) + \
-        '_i'+str(IMG_SIZE)
+#     predict_xcept = predict_submit(model, name=model.name)
+#     predict_xcept_tta = predict_tta(model, tta_steps=10)
 
-    if weights:
-        # load weights from 'best_model.hdf5'
-        model.load_weights(weights)
+#     work_model = models_efn_base
+#     BATCH_SIZE = 16
+#     IMG_SIZE = 224  # какого размера подаем изображения в сеть
+#     input_shape = (IMG_SIZE, IMG_SIZE, IMG_CHANNELS)
+#     # list of steps (learning rate, unfreeze_ratio, epochs)
+#     #  unfreeze_ratio: 0.0 - freeze, 1.0 - unfreeze base model
+#     steps = [(1e-3, 0, 10),
+#             (1e-4, 0, 10),
+#             (1e-4, 0.25, 5),
+#             (1e-4, 0.5, 5),
+#             (1e-5, 1, 5)]
+#     (train_generator, val_generator,
+#     sub_generator, tta_generator) = build_generators()
+#     model = fine_tune_fit(work_model, input_shape, steps)
+#     BATCH_SIZE = 4
+#     IMG_SIZE = 300  # какого размера подаем изображения в сеть
+#     input_shape = (IMG_SIZE, IMG_SIZE, IMG_CHANNELS)
+#     # first step = previous step for weights loading
+#     steps = [(1e-5, 1, 5)]
+#     (train_generator, val_generator,
+#     sub_generator, tta_generator) = build_generators()
+#     model = fine_tune_fit(work_model, input_shape, steps)
 
-    scores = model.evaluate(val_generator, verbose=1)
-    print(f"{'-'*40}\n" +
-            f"before {step} training\n" +
-            f"Accuracy: {scores[1]*100:.2f}\n" +
-            f"{'-'*40}\n" +
-            f"Start training. Unfreeze: {ratio}, LR: {lr}\n" +
-            f"{'-'*40}")
+#     predict_efn = predict_submit(model, name=model.name)
+#     predict_efn_tta = predict_tta(model, tta_steps=10)
 
-    history = model.fit(
-        train_generator,
-        validation_data=val_generator,
-        epochs=epochs,
-        callbacks=callbacks_list
-    )
-
-    scores = model.evaluate(val_generator, verbose=1)
-    print(f"{'-'*21}\n" +
-            f"Accuracy step {step}: {scores[1]*100:.2f}\n" +
-            f"{'-'*21}")
-    plot_history(history,
-                    model_name,
-                    f'Accuracy step {step}: {scores[1]*100:.2f}')
-    weights = 'best_model.hdf5'
-
-    if IS_ENV_COLAB:
-        subprocess.run(['cp', 'best_model.hdf5',
-                        '/content/drive/MyDrive/Colab Notebooks/kaggle/models'], capture_output=True)
-
-        subprocess.run(['cp'] + glob.glob('*.png') +
-                        ['/content/drive/MyDrive/Colab Notebooks/kaggle/models'], capture_output=True)
-
-    return model
+#     pred_sum = predict_xcept + predict_xcept_tta + predict_efn + predict_efn_tta
+#     create_submission(predictions_sum, name='ensemble')
 
 
 """
@@ -472,118 +567,43 @@ K.clear_session()
 train_df, sample_submission = load_data()
 # plot_images()
 plot_im_size(train_df)
-# images, labels, images_sub = load_data()
-# print(images.shape)
 
-train_datagen = ImageDataGenerator(  # rescale=1. / 255,
-    rotation_range=50,
-    shear_range=0.2,
-    zoom_range=[0.75, 1.25],
-    brightness_range=[0.5, 1.5],
-    width_shift_range=0.1,
-    height_shift_range=0.1,
-    horizontal_flip=False,
-    validation_split=VAL_SPLIT)
-test_datagen = ImageDataGenerator(  # rescale=1. / 255
-)
-
-train_generator = train_datagen.flow_from_directory(
-    PATH+'train/',      # директория где расположены папки с картинками
-    target_size=(IMG_SIZE, IMG_SIZE),
-    batch_size=BATCH_SIZE,
-    class_mode='categorical',
-    shuffle=True,
-    seed=RANDOM_SEED,
-    subset='training')  # set as training data
-
-val_generator = train_datagen.flow_from_directory(
-    PATH+'train/',
-    target_size=(IMG_SIZE, IMG_SIZE),
-    batch_size=BATCH_SIZE,
-    class_mode='categorical',
-    shuffle=True, seed=RANDOM_SEED,
-    subset='validation')  # set as validation data
-
-sub_generator = test_datagen.flow_from_dataframe(
-    dataframe=sample_submission,
-    directory=PATH+'test_upload/',
-    x_col="Id",
-    y_col=None,
-    shuffle=False,
-    class_mode=None,
-    seed=RANDOM_SEED,
-    target_size=(IMG_SIZE, IMG_SIZE),
-    batch_size=BATCH_SIZE,)
+(train_generator, val_generator,
+ sub_generator, tta_generator) = build_generators()
 
 # plot_images_from_generator(train_generator)
 # plot_images_from_generator(val_generator)
 
-checkpoint = ModelCheckpoint('best_model.hdf5', monitor=[
-                             'val_accuracy'], verbose=1, mode='max')
-earlystop = EarlyStopping(monitor='val_accuracy',
-                          patience=5, restore_best_weights=True)
-callbacks_list = [checkpoint, earlystop]
+callbacks_list = create_callbacks()
 
-# work_model = models_xception_base
-work_model = models_efn_base
-# step - (lr, unfreeze_ratio, epochs)
-steps = [(1e-3, 0, 10),
-         (1e-4, 0, 10),
-         (1e-4, 0.25, 5),
-         (1e-4, 0.5, 5),
-         (1e-5, 1, 5)]
+work_model = models_xception_base
+# work_model = models_efn_base
 
-model = fine_tune_fit(work_model, input_shape, steps)
-predict_submission(model, generator=sub_generator, name=model.name)
-model.save('model_224px.hdf5')
-print(f'Running time: {datetime.now() - start_time}')
+# list of steps (learning rate, unfreeze_ratio, epochs)
+#  unfreeze_ratio: 0.0 - freeze, 1.0 - unfreeze base model
+# steps = [(1e-3, 0, 10),
+#          (1e-4, 0, 10),
+#          (1e-4, 0.25, 5),
+#          (1e-4, 0.5, 5),
+#          (1e-5, 1, 5)]
+
+# model = fine_tune_fit(work_model, input_shape, steps)
+
+# model.save('model_224px.hdf5')
+# print(f'Running time: {datetime.now() - start_time}')
 
 # single step with hi image rezolution
-IMG_SIZE             = 512 # какого размера подаем изображения в сеть
-IMG_CHANNELS         = 3   # у RGB 3 канала
-input_shape          = (IMG_SIZE, IMG_SIZE, IMG_CHANNELS)
 
-# step=steps[-1]
-step = (1e-5, 1, 15)
-model = fit(work_model, input_shape, step, weights='best_model.hdf5')
-# model = fit(work_model, input_shape, step)
-# input_shape, step, weights
-# 'best_model.hdf5'
+BATCH_SIZE = 64
+IMG_SIZE = 300  # какого размера подаем изображения в сеть
+IMG_CHANNELS = 3   # у RGB 3 канала
+input_shape = (IMG_SIZE, IMG_SIZE, IMG_CHANNELS)
 
-# single step
+(train_generator, val_generator,
+ sub_generator, tta_generator) = build_generators()
 
-# model = model_xcept(lr=LR)
-# model = model_xcept_new(lr=LR, unfreeze_ratio=0)
-# model_name = model.name+'dl2_d025_e5' + \
-#     '_lr_'+str(LR) + \
-#     '_i'+str(IMG_SIZE)
-
-
-# model = model_efn(lr=LR)
-# model = model_efn_bnorm(lr=LR)
-# model.load_weights('best_model.hdf5')
-# model_name = 'efnbnorm dl2 d0 tr100 +5' + \
-#     '_lr_'+str(LR) + \
-#     ' i'+str(IMG_SIZE)
-
-# # model.compile(loss="categorical_crossentropy", optimizer=optimizers.Adam(lr=LR), metrics=["accuracy"])
-
-# scores = model.evaluate(val_generator, verbose=1)
-# print(f"{'-'*15}\nbefore training\nAccuracy: {scores[1]*100:.2f}\n{'-'*15}")
-
-# history = model.fit(
-#     train_generator,
-#     validation_data=val_generator,
-#     # steps_per_epoch = train_generator.samples//train_generator.batch_size,
-#     # validation_data = test_generator,
-#     # validation_steps = test_generator.samples//test_generator.batch_size,
-#     epochs=EPOCHS,
-#     callbacks=callbacks_list
-# )
-
-# scores = model.evaluate(val_generator, verbose=1)
-# print(f"{'-'*15}\nAccuracy: {scores[1]*100:.2f}\n{'-'*15}")
-# plot_history(history, model_name, f'Accuracy: {scores[1]*100:.2f}')
+steps = [(1e-5, 1, 15)]
+model = fine_tune_fit(work_model, input_shape, steps, weights=None)
 
 # subprocess.run(['cp', 'best_model.hdf5',
 #                '/content/drive/MyDrive/Colab Notebooks/kaggle/models'], capture_output=True)
@@ -604,9 +624,12 @@ model.save('model_last.hdf5')
 
 # model = work_model()
 # model.load_weights('best_model.hdf5')
-predict_submission(model, generator=sub_generator, name=model.name)
+# predict_submission(model, generator=sub_generator, name=model.name+'512px')
+# predict_submit(model, name=model.name+'512px')
 
 print(f'Running time: {datetime.now() - start_time}')
 
 # if __name__ == '__main__':
 #     main()
+
+os.walk('.')
