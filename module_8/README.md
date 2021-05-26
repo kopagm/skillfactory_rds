@@ -11,9 +11,9 @@
 
 - Получение, распаковка данных из датасета соревнования
 - EDA
-- Аугментация и генерация изображений с использованием `tf.keras.preprocessing.image.ImageDataGenerator`
+- Аугментация и генерация изображений с использованием `ImageDataGenerator`
 - Использование Transfer Learning и Fine-tuning.
-- Использование EfficientNetB6, Xception с набором весов imagenet
+- Использование `EfficientNetB6`, `Xception` с набором весов imagenet
 - Использование Batch Normalization в архитектуре "головы"
 - Выбор коэффициента скорости обучения
 - Использование Test Time Augmentation
