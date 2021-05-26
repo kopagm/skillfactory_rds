@@ -105,6 +105,7 @@ def load_train_test_from_csv(path=DATA_PATH):
     sample_submission = pd.read_csv(f'{path}sample-submission.csv')
     return (train_df, sample_submission)
 
+
 def decommpress_images():
     """
     load DataFrames from files (train_df, sample_submission)
@@ -328,7 +329,6 @@ def plot_history(history, model_name='model', score=''):
     plt.legend()
     plt.savefig(f'accuracy_{model_name}_{now}.png', dpi=600)
 
-    # plt.figure()
     plt.figure(figsize=(10, 5))
     plt.plot(epochs, loss, 'b', label='Training loss')
     plt.plot(epochs, val_loss, 'r', label='Validation loss')
@@ -481,6 +481,7 @@ def fine_tune_fit(model_input, input_shape,
 
         # scores = model.evaluate(val_generator, verbose=1)
         print(f"{'-'*40}\n" +
+              f"{step+1}/{len(steps)} step training\n" +
               #   f"before {step} training\n" +
               #   f"Accuracy: {scores[1]*100:.2f}\n" +
               #   f"{'-'*40}\n" +
@@ -598,64 +599,69 @@ if MOCK_DATA:
     sample_submission = sample_submission[:20]
     IMG_TRAIN_PATH = IMG_MOCK_TRAIN_PATH
 
-    train_df, sample_submission = load_train_test_from_csv()
-    callbacks_list = create_callbacks()
+callbacks_list = create_callbacks()
 
-    work_model = models_xception_base
-    BATCH_SIZE = 64
-    IMG_SIZE = 224  # какого размера подаем изображения в сеть
-    input_shape = (IMG_SIZE, IMG_SIZE, IMG_CHANNELS)
-    # list of steps (learning rate, unfreeze_ratio, epochs)
-    #  unfreeze_ratio: 0.0 - freeze, 1.0 - unfreeze base model
-    steps = [(1e-3, 0, 10),
-            (1e-4, 0, 10),
-            (1e-4, 0.25, 5),
-            (1e-4, 0.5, 5),
-            (1e-5, 1, 5)]
-    (train_generator, val_generator,
-    sub_generator, tta_generator) = build_generators()
-    model = fine_tune_fit(work_model, input_shape, steps)
+work_model = models_xception_base
+BATCH_SIZE = 64
+IMG_SIZE = 224  # какого размера подаем изображения в сеть
+input_shape = (IMG_SIZE, IMG_SIZE, IMG_CHANNELS)
+# list of steps (learning rate, unfreeze_ratio, epochs)
+#  unfreeze_ratio: 0.0 - freeze, 1.0 - unfreeze base model
+steps = [(1e-3, 0, 10),
+         # (1e-4, 0, 10),
+         # (1e-4, 0.25, 5),
+         (1e-4, 0.5, 10),
+         (1e-5, 1, 5)]
+(train_generator, val_generator,
+ sub_generator, tta_generator) = build_generators()
+model = fine_tune_fit(work_model, input_shape, steps)
 
-    BATCH_SIZE = 32
-    IMG_SIZE = 300  # какого размера подаем изображения в сеть
-    input_shape = (IMG_SIZE, IMG_SIZE, IMG_CHANNELS)
-    # first step = previous step for weights loading
-    steps = [(1e-5, 1, 5)]
-    (train_generator, val_generator,
-    sub_generator, tta_generator) = build_generators()
-    model = fine_tune_fit(work_model, input_shape, steps)
+BATCH_SIZE = 32
+IMG_SIZE = 300  # какого размера подаем изображения в сеть
+input_shape = (IMG_SIZE, IMG_SIZE, IMG_CHANNELS)
+# first step = previous step for weights loading
+steps = [(1e-4, 1, 10)]
+(train_generator, val_generator,
+ sub_generator, tta_generator) = build_generators()
 
-    predict_xcept = predict_submit(model, name=model.name)
-    predict_xcept_tta = predict_tta(model, tta_steps=10)
+# load previous weights
+model = fine_tune_fit(work_model, input_shape, steps,
+                      weights='best_model.hdf5')
 
-    work_model = models_efn_base
-    BATCH_SIZE = 16
-    IMG_SIZE = 224  # какого размера подаем изображения в сеть
-    input_shape = (IMG_SIZE, IMG_SIZE, IMG_CHANNELS)
-    # list of steps (learning rate, unfreeze_ratio, epochs)
-    #  unfreeze_ratio: 0.0 - freeze, 1.0 - unfreeze base model
-    steps = [(1e-3, 0, 10),
-            (1e-4, 0, 10),
-            (1e-4, 0.25, 5),
-            (1e-4, 0.5, 5),
-            (1e-5, 1, 5)]
-    (train_generator, val_generator,
-    sub_generator, tta_generator) = build_generators()
-    model = fine_tune_fit(work_model, input_shape, steps)
-    BATCH_SIZE = 4
-    IMG_SIZE = 300  # какого размера подаем изображения в сеть
-    input_shape = (IMG_SIZE, IMG_SIZE, IMG_CHANNELS)
-    # first step = previous step for weights loading
-    steps = [(1e-5, 1, 5)]
-    (train_generator, val_generator,
-    sub_generator, tta_generator) = build_generators()
-    model = fine_tune_fit(work_model, input_shape, steps)
+predict_xcept = predict_submit(model, name=model.name)
+predict_xcept_tta = predict_tta(model, tta_steps=10)
 
-    predict_efn = predict_submit(model, name=model.name)
-    predict_efn_tta = predict_tta(model, tta_steps=10)
+work_model = models_efn_base
+BATCH_SIZE = 16
+IMG_SIZE = 224  # какого размера подаем изображения в сеть
+input_shape = (IMG_SIZE, IMG_SIZE, IMG_CHANNELS)
+# list of steps (learning rate, unfreeze_ratio, epochs)
+#  unfreeze_ratio: 0.0 - freeze, 1.0 - unfreeze base model
+steps = [(1e-3, 0, 10),
+         #  (1e-4, 0, 10),
+         #  (1e-4, 0.25, 5),
+         (1e-4, 0.5, 10),
+         (1e-5, 1, 5)]
+(train_generator, val_generator,
+ sub_generator, tta_generator) = build_generators()
+model = fine_tune_fit(work_model, input_shape, steps)
+BATCH_SIZE = 4
+IMG_SIZE = 300  # какого размера подаем изображения в сеть
+input_shape = (IMG_SIZE, IMG_SIZE, IMG_CHANNELS)
+# first step = previous step for weights loading
+steps = [(1e-4, 1, 10)]
+(train_generator, val_generator,
+ sub_generator, tta_generator) = build_generators()
 
-    pred_sum = predict_xcept + predict_xcept_tta + predict_efn + predict_efn_tta
-    create_submission(pred_sum, name='ensemble')
+# load previous weights
+model = fine_tune_fit(work_model, input_shape, steps,
+                      weights='best_model.hdf5')
+
+predict_efn = predict_submit(model, name=model.name)
+predict_efn_tta = predict_tta(model, tta_steps=10)
+
+pred_sum = predict_xcept + predict_xcept_tta + predict_efn + predict_efn_tta
+create_submission(pred_sum, name='ensemble')
 
 
 # plot_images_from_generator(train_generator)
