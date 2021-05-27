@@ -1,58 +1,29 @@
-import csv
 import glob
 import os
-import pickle
 import shutil
 import subprocess
 import sys
-import tarfile
 import zipfile
 from datetime import datetime
 
-# import efficientnet.tfkeras as efn
-import keras
 import matplotlib.pyplot as plt
-# Commented out IPython magic to ensure Python compatibility.
 import numpy as np
 import pandas as pd
 import PIL
-import scipy.io
-import seaborn as sns
 import tensorflow as tf
 import tensorflow.keras as keras
-import tensorflow.keras.backend as K
-import tensorflow.keras.callbacks as C
-import tensorflow.keras.layers as L
-import tensorflow.keras.models as M
-# from kaggle.api.kaggle_api_extended import KaggleApi
-from keras import *
-from keras.layers import *
-from keras.models import load_model
-from pandas.core.indexes import base
-from PIL import ImageFilter, ImageOps
-from skimage import io
-from sklearn.model_selection import train_test_split
-#from tensorflow.keras.regularizers import l2
+from tensorflow.keras import *
 from tensorflow.keras import optimizers
 from tensorflow.keras.applications import EfficientNetB6, Xception
 from tensorflow.keras.applications.xception import preprocess_input
 from tensorflow.keras.callbacks import (Callback, EarlyStopping,
                                         LearningRateScheduler, ModelCheckpoint)
-from tensorflow.keras.preprocessing import image
+from tensorflow.keras.layers import *
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
 
-# EPOCHS = 10  # эпох на обучение
-# BATCH_SIZE = 64  # Xception # уменьшаем batch если сеть большая, иначе не влезет в память на GPU
-# BATCH_SIZE = 16  # EfficientNetB6
-# LR = 1e-4
 VAL_SPLIT = 0.15  # сколько данных выделяем на тест = 15%
-
 CLASS_NUM = 10  # количество классов в нашей задаче
-# IMG_SIZE = 224  # какого размера подаем изображения в сеть
-# IMG_SIZE = 64  # какого размера подаем изображения в сеть
-
 IMG_CHANNELS = 3   # у RGB 3 канала
-# input_shape = (IMG_SIZE, IMG_SIZE, IMG_CHANNELS)
 
 RANDOM_SEED = 42
 np.random.seed(RANDOM_SEED)
@@ -81,8 +52,11 @@ def download_competition_data():
     dowload data in colab from kaggle
     """
     subprocess.run(['mkdir', '-p', '/root/.kaggle'], capture_output=True)
-    subprocess.run(['cp', '/content/drive/MyDrive/Colab Notebooks/kaggle/kaggle.json',
-                    '/root/.kaggle'], capture_output=True)
+    subprocess.run(
+        ['cp',
+         '/content/drive/MyDrive/Colab Notebooks/kaggle/kaggle.json',
+         '/root/.kaggle'],
+        capture_output=True)
     subprocess.run(['kaggle', 'competitions', 'download', '-c',
                     'sf-dl-car-classification'], capture_output=True)
 
@@ -91,7 +65,8 @@ def unzip_data(path_input='.', path_output='.'):
     # unzip data
     if not os.path.exists(path_output):
         os.makedirs(path_output)
-    if not all([dir in os.listdir(path_output) for dir in ['train', 'test_upload']]):
+    if not all([dir in os.listdir(path_output) for dir in ['train',
+                                                           'test_upload']]):
         for data_zip in ['train.zip', 'test.zip']:
             with zipfile.ZipFile(f'{path_input}{data_zip}', 'r') as z:
                 z.extractall(path_output)
@@ -195,7 +170,8 @@ def plot_images():
     random_image = train_df.sample(n=9)
     # random_image_paths = random_image['Id'].values
     # random_image_cat = random_image['Category'].values
-    for index, (id, cat) in enumerate(zip(random_image['Id'], random_image['Category'])):
+    for index, (id, cat) in enumerate(zip(random_image['Id'],
+                                          random_image['Category'])):
         # for index, path in enumerate(random_image_paths):
         im = PIL.Image.open(f'{IMG_PATH}train/{cat}/{id}')
         plt.subplot(3, 3, index+1)
@@ -436,7 +412,7 @@ def models_xception_base(input_shape, lr=1e-3):
     inputs = keras.Input(shape=input_shape)
     x = tf.cast(inputs, tf.float32)
     x = preprocess_input(x)
-    x = base_model(x, training=False)
+    x = base_model(x)
     # base_model.summary()
 
     # let's add a fully-connected layer
@@ -584,8 +560,6 @@ Main part
 # def main():
 start_time = datetime.now()
 
-K.clear_session()
-
 decommpress_images()
 
 train_df, sample_submission = load_train_test_from_csv()
@@ -612,6 +586,10 @@ steps = [(1e-3, 0, 10),
          # (1e-4, 0.25, 5),
          (1e-4, 0.5, 10),
          (1e-5, 1, 5)]
+if MOCK_DATA:
+    steps = [(1e-3, 1, 1),
+             (1e-4, 1, 1)]
+
 (train_generator, val_generator,
  sub_generator, tta_generator) = build_generators()
 model = fine_tune_fit(work_model, input_shape, steps)
@@ -621,6 +599,8 @@ IMG_SIZE = 300  # какого размера подаем изображени�
 input_shape = (IMG_SIZE, IMG_SIZE, IMG_CHANNELS)
 # first step = previous step for weights loading
 steps = [(1e-4, 1, 10)]
+if MOCK_DATA:
+    steps = [(1e-4, 1, 1)]
 (train_generator, val_generator,
  sub_generator, tta_generator) = build_generators()
 
@@ -642,6 +622,9 @@ steps = [(1e-3, 0, 10),
          #  (1e-4, 0.25, 5),
          (1e-4, 0.5, 10),
          (1e-5, 1, 5)]
+if MOCK_DATA:
+    steps = [(1e-3, 1, 1),
+             (1e-4, 1, 1)]
 (train_generator, val_generator,
  sub_generator, tta_generator) = build_generators()
 model = fine_tune_fit(work_model, input_shape, steps)
@@ -650,6 +633,8 @@ IMG_SIZE = 300  # какого размера подаем изображени�
 input_shape = (IMG_SIZE, IMG_SIZE, IMG_CHANNELS)
 # first step = previous step for weights loading
 steps = [(1e-4, 1, 10)]
+if MOCK_DATA:
+    steps = [(1e-4, 1, 1)]
 (train_generator, val_generator,
  sub_generator, tta_generator) = build_generators()
 
