@@ -125,7 +125,6 @@ def create_submission(predictions, name=''):
          'Category': predictions},
         columns=['Id', 'Category'])
     submission['Id'] = submission['Id'].replace('test_upload/', '')
-    # submission.to_csv('submission.csv', index=False)
     submission.to_csv(f'{name}_submission.csv', index=False)
     if IS_ENV_COLAB:
         subprocess.run(['cp',
@@ -203,7 +202,6 @@ def build_generators():
     train_generator, val_generator, sub_generator, tta_generator
     """
 
-    # path_train = IMG_PATH+'train/'
     path_train = IMG_TRAIN_PATH
     path_test = IMG_PATH+'test_upload/'
 
@@ -303,7 +301,7 @@ def plot_history(history, model_name='model', score=''):
     plt.plot(epochs, val_acc, 'r', label='Validation acc')
     plt.title(f'Accuracy {model_name}. {score}')
     plt.legend()
-    plt.savefig(f'accuracy_{model_name}_{now}.png', dpi=600)
+    # plt.savefig(f'accuracy_{model_name}_{now}.png', dpi=600)
 
     plt.figure(figsize=(10, 5))
     plt.plot(epochs, loss, 'b', label='Training loss')
@@ -329,8 +327,9 @@ def print_layers(model):
 
 
 def create_callbacks():
-    checkpoint = ModelCheckpoint('best_model.hdf5', monitor=[
-        'val_accuracy'], verbose=1, mode='max')
+    checkpoint = ModelCheckpoint('best_model.hdf5',
+                                 monitor=['val_accuracy'],
+                                 verbose=1, mode='max')
     earlystop = EarlyStopping(monitor='val_accuracy',
                               patience=5,
                               restore_best_weights=True)
@@ -359,39 +358,6 @@ def compile_model(model, lr=1e-3):
     model.compile(loss="categorical_crossentropy",
                   optimizer=optimizers.Adam(lr),
                   metrics=["accuracy"])
-
-
-def models_efn_base(input_shape, lr=1e-4):
-    '''
-    EfficientNetB6 +batchnorm
-    EfficientNet models expect their inputs to be
-    float tensors of pixels with values in the [0-255] range.
-    '''
-
-    base_model = EfficientNetB6(weights='imagenet',
-                                include_top=False,
-                                input_shape=input_shape,
-                                pooling='avg')
-
-    # base_model.trainable = False
-
-    x = base_model.output
-    # let's add a fully-connected layer
-    x = Dense(256, activation='relu')(x)
-    x = BatchNormalization()(x)
-    x = Dropout(0.25)(x)
-    # and a logistic layer -- let's say we have 10 classes
-    predictions = Dense(CLASS_NUM, activation='softmax')(x)
-
-    # this is the model we will train
-    model = Model(inputs=base_model.input,
-                  outputs=predictions,
-                  name=f'EfficientNetB6')
-    model.compile(loss="categorical_crossentropy",
-                  optimizer=optimizers.Adam(lr),
-                  metrics=["accuracy"])
-
-    return model, base_model
 
 
 def models_xception_base(input_shape, lr=1e-3):
@@ -433,6 +399,39 @@ def models_xception_base(input_shape, lr=1e-3):
     return model, base_model
 
 
+def models_efn_base(input_shape, lr=1e-4):
+    '''
+    EfficientNetB6 +batchnorm
+    EfficientNet models expect their inputs to be
+    float tensors of pixels with values in the [0-255] range.
+    '''
+
+    base_model = EfficientNetB6(weights='imagenet',
+                                include_top=False,
+                                input_shape=input_shape,
+                                pooling='avg')
+
+    # base_model.trainable = False
+
+    x = base_model.output
+    # let's add a fully-connected layer
+    x = Dense(256, activation='relu')(x)
+    x = BatchNormalization()(x)
+    x = Dropout(0.25)(x)
+    # and a logistic layer -- let's say we have 10 classes
+    predictions = Dense(CLASS_NUM, activation='softmax')(x)
+
+    # this is the model we will train
+    model = Model(inputs=base_model.input,
+                  outputs=predictions,
+                  name=f'EfficientNetB6')
+    model.compile(loss="categorical_crossentropy",
+                  optimizer=optimizers.Adam(lr),
+                  metrics=["accuracy"])
+
+    return model, base_model
+
+
 def fine_tune_fit(model_input, input_shape,
                   steps=[], weights=None):
     """
@@ -447,6 +446,7 @@ def fine_tune_fit(model_input, input_shape,
 
     for step, (lr, ratio, epochs) in enumerate(steps):
 
+        step +=1 # for printing [1..N]
         unfreeze_model(base_model, ratio)
         compile_model(model, lr)
         model_name = model.name + \
@@ -457,7 +457,7 @@ def fine_tune_fit(model_input, input_shape,
 
         # scores = model.evaluate(val_generator, verbose=1)
         print(f"{'-'*40}\n" +
-              f"{step+1}/{len(steps)} step training\n" +
+              f"{step}/{len(steps)} step training\n" +
               #   f"before {step} training\n" +
               #   f"Accuracy: {scores[1]*100:.2f}\n" +
               #   f"{'-'*40}\n" +
@@ -579,9 +579,10 @@ work_model = models_xception_base
 BATCH_SIZE = 64
 IMG_SIZE = 224  # какого размера подаем изображения в сеть
 input_shape = (IMG_SIZE, IMG_SIZE, IMG_CHANNELS)
-# list of steps (learning rate, unfreeze_ratio, epochs)
+
+# Steps - list of steps (learning rate, unfreeze_ratio, epochs)
 #  unfreeze_ratio: 0.0 - freeze, 1.0 - unfreeze base model
-steps = [(1e-3, 0, 10),
+steps = [(1e-4, 0, 10),
          # (1e-4, 0, 10),
          # (1e-4, 0.25, 5),
          (1e-4, 0.5, 10),
