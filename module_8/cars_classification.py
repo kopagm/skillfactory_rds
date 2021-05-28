@@ -93,6 +93,19 @@ def decommpress_images():
     return load_train_test_from_csv(DATA_PATH)
 
 
+def copy_to_gdrive(path):
+    gdrive = '/content/drive/MyDrive/Colab Notebooks/kaggle/models/'
+    for file in glob.glob(path):
+        shutil.copy2(file, gdrive)
+
+
+def copy_from_gdrive(path):
+    gdrive = '/content/drive/MyDrive/Colab Notebooks/kaggle/models/'
+    from_path = gdrive + path
+    for file in glob.glob(from_path):
+        shutil.copy2(file, '.')
+
+
 def make_mock_data(n_samples=5):
     """
     Make PATH\mock_train with
@@ -432,8 +445,8 @@ def models_efn_base(input_shape, lr=1e-4):
     return model, base_model
 
 
-def fine_tune_fit(model_input, input_shape,
-                  steps=[], weights=None):
+def fine_tune_fit(model_input, input_shape, steps=[],
+                  weights=None, unfreeze_ratio=0):
     """
     Build and fine-tune model over list of steps.
     Each step - (lr, unfreeze_ratio, epochs)
@@ -442,11 +455,13 @@ def fine_tune_fit(model_input, input_shape,
     model, base_model = model_input(input_shape)
     if weights:
         # load weights from 'best_model.hdf5'
+        # (_, ratio, _) = steps[0]
+        unfreeze_model(base_model, ratio=unfreeze_ratio)
         model.load_weights(weights)
 
     for step, (lr, ratio, epochs) in enumerate(steps):
 
-        step +=1 # for printing [1..N]
+        step += 1  # for printing [1..N]
         unfreeze_model(base_model, ratio)
         compile_model(model, lr)
         model_name = model.name + \
@@ -473,6 +488,8 @@ def fine_tune_fit(model_input, input_shape,
 
         model.save(f'{model_name}_step{step}.hdf5')
         model.load_weights('best_model.hdf5')
+        if IS_ENV_COLAB:
+            copy_to_gdrive('*.hdf5')
 
         scores = model.evaluate(val_generator, verbose=1)
         print(f"{'-'*21}\n" +
@@ -481,14 +498,11 @@ def fine_tune_fit(model_input, input_shape,
         plot_history(history,
                      model_name,
                      f'Accuracy step {step}: {scores[1]*100:.2f}')
-        print(f'Running time: {datetime.now() - start_time}')
+        # print(f'Running time: {datetime.now() - start_time}')
 
     if IS_ENV_COLAB:
-        subprocess.run(['cp', 'best_model.hdf5',
-                        '/content/drive/MyDrive/Colab Notebooks/kaggle/models'], capture_output=True)
-
-        subprocess.run(['cp'] + glob.glob('*.png') +
-                       ['/content/drive/MyDrive/Colab Notebooks/kaggle/models'], capture_output=True)
+        copy_to_gdrive('*.hdf5')
+        copy_to_gdrive('*.png')
 
     return model
 
@@ -582,10 +596,10 @@ input_shape = (IMG_SIZE, IMG_SIZE, IMG_CHANNELS)
 
 # Steps - list of steps (learning rate, unfreeze_ratio, epochs)
 #  unfreeze_ratio: 0.0 - freeze, 1.0 - unfreeze base model
-steps = [(1e-4, 0, 10),
+steps = [(1e-4, 0, 8),
          # (1e-4, 0, 10),
          # (1e-4, 0.25, 5),
-         (1e-4, 0.5, 10),
+         (1e-4, 0.5, 8),
          (1e-5, 1, 5)]
 if MOCK_DATA:
     steps = [(1e-3, 1, 1),
@@ -594,20 +608,25 @@ if MOCK_DATA:
 (train_generator, val_generator,
  sub_generator, tta_generator) = build_generators()
 model = fine_tune_fit(work_model, input_shape, steps)
+(_, last_unfreeze_ratio, _) = steps[-1]
 
 BATCH_SIZE = 32
 IMG_SIZE = 300  # какого размера подаем изображения в сеть
 input_shape = (IMG_SIZE, IMG_SIZE, IMG_CHANNELS)
 # first step = previous step for weights loading
-steps = [(1e-4, 1, 10)]
+steps = [(1e-4, 1, 8)]
 if MOCK_DATA:
     steps = [(1e-4, 1, 1)]
+
 (train_generator, val_generator,
  sub_generator, tta_generator) = build_generators()
 
+# (_, ratio, _) = steps[0]
 # load previous weights
 model = fine_tune_fit(work_model, input_shape, steps,
-                      weights='best_model.hdf5')
+                      weights='best_model.hdf5',
+                      unfreeze_ratio=last_unfreeze_ratio)
+(_, last_unfreeze_ratio, _) = steps[-1]
 
 predict_xcept = predict_submit(model, name=model.name)
 predict_xcept_tta = predict_tta(model, tta_steps=10)
@@ -618,30 +637,36 @@ IMG_SIZE = 224  # какого размера подаем изображени�
 input_shape = (IMG_SIZE, IMG_SIZE, IMG_CHANNELS)
 # list of steps (learning rate, unfreeze_ratio, epochs)
 #  unfreeze_ratio: 0.0 - freeze, 1.0 - unfreeze base model
-steps = [(1e-3, 0, 10),
+steps = [(1e-3, 0, 8),
          #  (1e-4, 0, 10),
          #  (1e-4, 0.25, 5),
-         (1e-4, 0.5, 10),
+         (1e-4, 0.5, 8),
          (1e-5, 1, 5)]
 if MOCK_DATA:
     steps = [(1e-3, 1, 1),
              (1e-4, 1, 1)]
+
 (train_generator, val_generator,
  sub_generator, tta_generator) = build_generators()
 model = fine_tune_fit(work_model, input_shape, steps)
+(_, last_unfreeze_ratio, _) = steps[-1]
+
 BATCH_SIZE = 4
 IMG_SIZE = 300  # какого размера подаем изображения в сеть
 input_shape = (IMG_SIZE, IMG_SIZE, IMG_CHANNELS)
 # first step = previous step for weights loading
-steps = [(1e-4, 1, 10)]
+steps = [(1e-4, 1, 8)]
 if MOCK_DATA:
     steps = [(1e-4, 1, 1)]
+
 (train_generator, val_generator,
  sub_generator, tta_generator) = build_generators()
 
 # load previous weights
 model = fine_tune_fit(work_model, input_shape, steps,
-                      weights='best_model.hdf5')
+                      weights='best_model.hdf5',
+                      unfreeze_ratio=last_unfreeze_ratio)
+(_, last_unfreeze_ratio, _) = steps[-1]
 
 predict_efn = predict_submit(model, name=model.name)
 predict_efn_tta = predict_tta(model, tta_steps=10)
@@ -679,3 +704,5 @@ print(f'Running time: {datetime.now() - start_time}')
 
 # if __name__ == '__main__':
 #     main()
+
+# shutil.copy2('', '/content/drive/MyDrive/Colab Notebooks/kaggle/models')
