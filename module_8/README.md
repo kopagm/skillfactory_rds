@@ -6,6 +6,7 @@
 
 Соревнование kaggle - https://www.kaggle.com/c/sf-dl-car-classification
 
+Kaggle code - https://www.kaggle.com/kopagm/sf-car-class
 
 ## Этапы выполнения
 
