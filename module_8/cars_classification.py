@@ -630,6 +630,8 @@ model = fine_tune_fit(work_model, input_shape, steps,
 
 predict_xcept = predict_submit(model, name=model.name)
 predict_xcept_tta = predict_tta(model, tta_steps=10)
+create_submission(predict_xcept_tta, name='xcept_tta')
+
 
 work_model = models_efn_base
 BATCH_SIZE = 16
@@ -670,6 +672,7 @@ model = fine_tune_fit(work_model, input_shape, steps,
 
 predict_efn = predict_submit(model, name=model.name)
 predict_efn_tta = predict_tta(model, tta_steps=10)
+create_submission(predict_efn_tta, name='efn_tta')
 
 pred_sum = predict_xcept + predict_xcept_tta + predict_efn + predict_efn_tta
 create_submission(pred_sum, name='ensemble')
